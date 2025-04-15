@@ -1,0 +1,13 @@
+# Exclusions standard Python
+.venv/
+__pycache__/
+*.pyc
+
+# Dossiers générés
+output/
+fichiers_excel/
+
+# Si projet Node accidentellement ajouté
+node_modules/
+package-lock.json
+package.json
