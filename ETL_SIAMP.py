@@ -1,10 +1,20 @@
+# -*- coding: utf-8 -*-
 from gooey import Gooey, GooeyParser
 import pandas as pd
 import os
 import re
+from time import sleep
+import warnings
 from openpyxl import load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
+import sys
+import io
+
+if sys.stdout and hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
 @Gooey(
     program_name="Fusion Excel - SIAMP",
@@ -14,57 +24,75 @@ from openpyxl.utils import get_column_letter
     required_cols=1,
     optional_cols=2,
     show_success_modal=True,
-    clear_before_run=True
+    show_failure_modal=True,
+    clear_before_run=True,
+    show_progress_bar=True,
+    progress_regex=r"^PROGRESS: (\d+)%$",
+    use_legacy_titles=True
 )
 def main():
     parser = GooeyParser(description="Fusionnez plusieurs fichiers Excel contenant des feuilles nommées Turnover")
-    
+
     parser.add_argument(
         "fichiers",
         metavar="Fichiers Excel à fusionner",
         widget="MultiFileChooser",
         help="Sélectionnez les fichiers Excel à traiter (.xlsx uniquement)",
-        nargs="+"
+        nargs="+",
+        gooey_options={
+            'wildcard': "Fichiers Excel (*.xlsx)|*.xlsx"
+        }
     )
 
     parser.add_argument(
-        "nom_sortie",
-        metavar="Nom du fichier de sortie",
-        help="Nom du fichier final (ex: fusion.xlsx)",
-        default="fusion_finale.xlsx"
+        "chemin_sortie",
+        metavar="Emplacement du fichier de sortie",
+        widget="FileSaver",
+        help="Chemin complet du fichier final (ex: C:\\...\\fusion.xlsx)",
+        default="fusion_finale.xlsx",
+        gooey_options={
+            'wildcard': "Fichiers Excel (*.xlsx)|*.xlsx"
+        }
     )
 
     args = parser.parse_args()
 
-    # 🔎 Filtrage avancé pour exclure les fichiers Excel temporaires
     fichiers = [
         f for f in args.fichiers
         if f.endswith('.xlsx') and not os.path.basename(f).startswith('~$')
     ]
     
-    nom_final = args.nom_sortie
-    dossier_sortie = "output"
+    chemin_final = args.chemin_sortie
+    dossier_sortie = os.path.dirname(chemin_final)
+
+    if not dossier_sortie:
+        dossier_sortie = "."
+        chemin_final = os.path.join(dossier_sortie, chemin_final)
+
     os.makedirs(dossier_sortie, exist_ok=True)
-    chemin_final = os.path.join(dossier_sortie, nom_final)
 
-    # 📌 Regex pour identifier les feuilles "Turnover", "TURNOVER", ou "Turnover Oct 24"
+    # ✅ Ajout automatique de l'extension si manquante
+    if not chemin_final.lower().endswith(".xlsx"):
+        chemin_final += ".xlsx"
+
     pattern_turnover = re.compile(r"^Turnover$|^TURNOVER$|^Turnover\s+[A-Z][a-z]{2}\s+\d{1,2}$")
-
     dfs = []
+    total = len(fichiers)
 
-    for fichier in fichiers:
+    print("Début de la fusion des fichiers...\n")
+
+    for i, fichier in enumerate(fichiers):
         try:
             xls = pd.ExcelFile(fichier, engine="openpyxl")
             feuilles = [s for s in xls.sheet_names if pattern_turnover.match(s)]
 
             if not feuilles:
-                print(f"❌ Aucune feuille 'Turnover' valide trouvée dans {fichier}. Ignoré.")
+                print(f"[INFO] Aucune feuille 'Turnover' trouvée dans {fichier}.")
                 continue
 
             for feuille in feuilles:
                 df = xls.parse(feuille, usecols="A:O")
 
-                # ✅ Harmonisation des colonnes similaires
                 if "CURRENCY" in df.columns and "Currency" not in df.columns:
                     df.rename(columns={"CURRENCY": "Currency"}, inplace=True)
                 elif "Currency" in df.columns and "CURRENCY" in df.columns:
@@ -83,20 +111,22 @@ def main():
                 df["Feuille"] = feuille
                 dfs.append(df)
 
-                print(f"✅ Feuille prise en compte : {feuille} ({os.path.basename(fichier)})")
+                print(f"[OK] Feuille ajoutée : {feuille} ({os.path.basename(fichier)})")
 
         except Exception as e:
-            print(f"❌ Erreur avec le fichier {fichier} : {e}")
+            print(f"[ERREUR] Problème avec {fichier} : {e}")
+
+        pourcentage = int(((i + 1) / total) * 100)
+        print(f"PROGRESS: {pourcentage}%")
+        sleep(0.1)
 
     if not dfs:
-        print("❌ Aucun fichier ou feuille valide n'a été trouvée.")
+        print("\nAucun fichier ou feuille valide détecté. Arrêt.")
         return
 
-    # 🔗 Fusion des données
     fusion = pd.concat(dfs, ignore_index=True)
     fusion.to_excel(chemin_final, index=False)
 
-    # 🔽 Ajout automatique des filtres dans Excel via openpyxl
     wb = load_workbook(chemin_final)
     ws = wb.active
     max_col = ws.max_column
@@ -111,7 +141,12 @@ def main():
 
     wb.save(chemin_final)
 
-    print(f"\n✅ Fusion réussie ! Fichier enregistré ici : {chemin_final}")
+    recap = "\n=== ✅ FUSION COMPLÉTÉE AVEC SUCCÈS ===\n"
+    recap += f"📄 Fichier généré : {chemin_final}\n"
+
+    recap += "\nMerci d’avoir utilisé l’outil ETL SIAMP. 🚀\n"
+
+    print(recap)
 
 if __name__ == '__main__':
     main()
