@@ -13,6 +13,7 @@ from openpyxl.styles.numbers import BUILTIN_FORMATS
 import sys
 import io
 import argparse
+import requests
 
 # Console UTF-8
 if sys.stdout and hasattr(sys.stdout, "buffer"):
@@ -20,22 +21,78 @@ if sys.stdout and hasattr(sys.stdout, "buffer"):
 
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
-# Taux de conversion fixes (exemple, ajustables)
-taux_conversion = {
-    "EUR": 1.0,
-    "USD": 0.93,
-    "GBP": 1.15,
-    "EGP": 0.03,
-    "CHF": 1.04,
-    "AED": 0.25,
-    "JPY": 0.0062
-}
+# Taux de conversion par API ou fixe (exemple, ajustables)
+def get_live_conversion_rates():
+    url = "https://currencyapi.net/api/v1/rates"
+    params = {
+        "key": "tgogyMcj5vxTz5XDw9WDA90gYIueAV99IbgH"
+    }
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        if not data.get("valid", False):
+            raise ValueError("Clé API invalide ou réponse incorrecte")
+
+        rates = data.get("rates", {})
+        if "USD" not in rates:
+            raise ValueError("USD manquant dans les taux retournés")
+
+        usd_to_eur = 1 / float(rates["USD"])
+
+        rates_eur_base = {}
+        for code, taux in rates.items():
+            try:
+                taux = float(taux)
+                if taux != 0:
+                    rates_eur_base[code.upper()] = taux  # ✅ car les montants sont dans la devise
+            except:
+                continue
+        rates_eur_base["EUR"] = 1.0
+
+
+        print("[INFO] ✅ Taux de conversion vers EUR calculés correctement :")
+        for k, v in rates_eur_base.items():
+            print(f"  → {k} = {round(v, 6)} €")
+        return rates_eur_base
+
+    except Exception as e:
+        print(f"[ERREUR] Impossible de récupérer les taux via currencyapi.net : {e}")
+        print("[INFO] Repli sur les taux locaux (si définis)...")
+        return {
+            "EUR": 1.0,
+            "USD": 0.93,
+            "GBP": 1.15,
+            "EGP": 0.03,
+            "CHF": 1.04,
+            "AED": 0.25,
+            "JPY": 0.0062
+        }
+
+
+
+
 
 def main():
     parser = argparse.ArgumentParser(description="Fusionnez plusieurs fichiers Excel contenant des feuilles nommées Turnover")
     parser.add_argument("--fichiers", nargs='+', required=True, help="Liste des fichiers Excel à fusionner (peut inclure des jokers, ex: fichiers_excel/*.xlsx)")
     parser.add_argument("--chemin_sortie", required=True, help="Chemin du fichier Excel final")
+    parser.add_argument("--taux_manuels", required=False, help="Taux manuels au format 'USD=0.93,GBP=1.15'")
     args = parser.parse_args()
+
+    def parse_taux_manuels(taux_str):
+        taux_dict = {}
+        if not taux_str:
+            return taux_dict
+        try:
+            for paire in taux_str.split(","):
+                code, val = paire.strip().split("=")
+                taux_dict[code.strip().upper()] = float(val.strip())
+        except Exception as e:
+            print(f"[ERREUR] Format invalide pour les taux manuels : {e}")
+        return taux_dict
+
 
     fichiers = []
     for path in args.fichiers:
@@ -63,6 +120,24 @@ def main():
     total = len(fichiers)
 
     print("Début de la fusion des fichiers...\n")
+    taux_conversion = get_live_conversion_rates()
+
+    taux_manuels = parse_taux_manuels(args.taux_manuels)
+    if taux_manuels:
+        print("[INFO] 🔧 Taux manuels fournis :")
+        for k, v in taux_manuels.items():
+            print(f"  → {k} = {v} € (prioritaire sur API)")
+        taux_conversion.update(taux_manuels)  # ⬅️ remplace ou ajoute
+        if not args.taux_manuels:
+            print("\nVous pouvez entrer des taux manuellement (optionnel). Exemple : USD=0.93,GBP=1.15")
+            taux_input = input("Taux manuels : ")
+            taux_manuels = parse_taux_manuels(taux_input)
+            if taux_manuels:
+                print("[INFO] 🔧 Taux manuels fournis depuis la console :")
+                for k, v in taux_manuels.items():
+                    print(f"  → {k} = {v} € (prioritaire sur API)")
+                taux_conversion.update(taux_manuels)
+
 
     for i, fichier in enumerate(fichiers):
         print(f"🔍 Analyse du fichier : {os.path.basename(fichier)}", flush=True)
@@ -112,7 +187,8 @@ def main():
                             return None
                         taux = taux_conversion.get(devise)
                         if taux:
-                            return round(montant * taux, 2)
+                            print(f"[DEBUG] {montant} {devise} → {round(montant / taux, 2)} EUR via taux {taux}")
+                            return round(montant / taux, 2)
                         else:
                             print(f"[AVERTISSEMENT] Devise inconnue '{devise}' dans {os.path.basename(fichier)}", flush=True)
                             return None
@@ -131,9 +207,9 @@ def main():
                         print(f"[INFO] {lignes_supprimees} ligne(s) supprimée(s) pour valeurs non numériques dans {', '.join(colonnes_a_verifier)}.", flush=True)
                     df = df[masque]
 
-                    df["NomFichier"] = os.path.basename(fichier)
-                    df["Feuille"] = feuille
-                    dfs.append(df)
+                df["NomFichier"] = os.path.basename(fichier)
+                df["Feuille"] = feuille
+                dfs.append(df)
 
 
                 print(f"[OK] Feuille ajoutée : {feuille} ({os.path.basename(fichier)})")
