@@ -82,15 +82,17 @@ def main():
     print("Début de la fusion des fichiers...\n")
 
     for i, fichier in enumerate(fichiers):
+        print(f"🔍 Analyse du fichier : {os.path.basename(fichier)}", flush=True)
         try:
             xls = pd.ExcelFile(fichier, engine="openpyxl")
             feuilles = [s for s in xls.sheet_names if pattern_turnover.match(s)]
 
             if not feuilles:
-                print(f"[INFO] Aucune feuille 'Turnover' trouvée dans {fichier}.")
+                print(f"⚠️ Aucune feuille Turnover détectée dans {os.path.basename(fichier)}. Vérifiez son format.", flush=True)
                 continue
 
             for feuille in feuilles:
+                print(f"✅ Feuille trouvée : {feuille} ({os.path.basename(fichier)})", flush=True)
                 df = xls.parse(feuille, usecols="A:O")
 
                 if "CURRENCY" in df.columns and "Currency" not in df.columns:
@@ -117,7 +119,9 @@ def main():
             print(f"[ERREUR] Problème avec {fichier} : {e}")
 
         pourcentage = int(((i + 1) / total) * 100)
-        print(f"PROGRESS: {pourcentage}%")
+        if pourcentage == 100:
+            print("\n⏳ Les données sont entièrement chargées. Veuillez patienter pendant la finalisation du fichier Excel (ne fermez pas l'application)...", flush=True)
+        
         sleep(0.1)
 
     if not dfs:
@@ -146,7 +150,9 @@ def main():
 
     recap += "\nMerci d’avoir utilisé l’outil ETL SIAMP. 🚀\n"
 
-    print(recap)
+    print(recap, flush=True)
+
+    
 
 if __name__ == '__main__':
     main()

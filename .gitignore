@@ -9,5 +9,6 @@ fichiers_excel/
 
 # Si projet Node accidentellement ajouté
 node_modules/
+build/
 package-lock.json
 package.json
