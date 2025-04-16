@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['ETL_SIAMP.py'],
+    ['ETL_SIAMP_EXE_CREATOR_V2.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -35,6 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    version='version.txt',
-    icon=['siamp_icon.ico'],
+    icon=['C:\\Users\\elias\\OneDrive\\Documents\\PROFESSIONNEL\\SIAMP\\SUJETS\\SUJET - 1 (Gestion C.A filiales)\\Dev\\siamp_icon.ico'],
 )
