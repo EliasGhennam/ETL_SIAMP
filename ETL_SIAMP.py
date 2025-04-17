@@ -19,7 +19,8 @@ import sys
 import warnings
 from time import sleep
 from typing import Any
-
+import xml.etree.ElementTree as ET
+from datetime import datetime
 import pandas as pd
 import requests
 from openpyxl import load_workbook
@@ -34,58 +35,44 @@ warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 ***REMOVED***
 
 # ------------------------------------------------------------------ taux de change
-def get_conversion_rates(date: str | None = None) -> dict[str, float]:
-    """
-    Récupère un dict de taux de change en base EUR.
-    - date=None          : temps réel via /rates
-    - date="YYYY-MM-DD"  : historique via /historical
-    En cas de 400 sur l'historique (plan gratuit), bascule sur le temps réel.
-    """
-    if date:
-        url    = "https://currencyapi.net/api/v1/historical"
-        params = {"key": API_KEY, "date": date, "base_currency": "EUR"}
-        ctx    = f" au {date}"
-    else:
-        url    = "https://currencyapi.net/api/v1/rates"
-        params = {"key": API_KEY, "base_currency": "EUR"}
-        ctx    = " en temps réel"
+import requests
+import xml.etree.ElementTree as ET
+from datetime import datetime
 
+def get_ecb_rates():
+    url = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
     try:
-        resp = requests.get(url, params=params, timeout=10)
-        # si historique non dispo (400), retomber sur rates
-        if resp.status_code == 400 and date:
-            print(f"[WARN] Historique non dispo ({resp.status_code}), bascule en temps réel.")
-            return get_conversion_rates(date=None)
+        response = requests.get(url)
+        response.raise_for_status()
 
-        resp.raise_for_status()
-        data = resp.json()
-        if not data.get("valid", False):
-            raise ValueError("Réponse API invalide")
+        root = ET.fromstring(response.content)
+        ns = {'ns': 'http://www.ecb.int/vocabulary/2002-08-01/eurofxref'}
+        
+        # cherche la section Cube avec l'attribut time
+        cubes = root.findall(".//Cube[@time]")
+        if not cubes:
+            raise ValueError("Pas de données de taux trouvées")
 
-        raw = data.get("rates", {})
-        rates: dict[str, float] = {}
-        for code, val in raw.items():
-            try:
-                f = float(val)
-                if f != 0:
-                    rates[code.upper()] = f
-            except Exception:
-                continue
-        # garantissons qu'EUR existe à 1
-        rates["EUR"] = 1.0
+        latest_cube = cubes[0]
+        date = latest_cube.attrib["time"]
+        rates = {"EUR": 1.0}
 
-        print(f"[INFO] ✅ Taux de conversion{ctx} chargés :")
+        for cube in latest_cube.findall("Cube"):
+            currency = cube.attrib["currency"]
+            rate = float(cube.attrib["rate"])
+            rates[currency] = rate
+
+        print(f"[INFO] Taux ECB récupérés au {date}")
         for k, v in rates.items():
-            print(f"  → {k} = {round(v,6)} (unités/{ '€' if date is None else '€' })")
+            print(f"  → {k} = {v}")
         return rates
 
     except Exception as e:
-        print(f"[ERROR] Impossible de charger les taux{ctx} : {e}")
-        print("[INFO] Repli sur taux locaux par défaut…")
+        print(f"[ERROR] Erreur récupération ECB : {e}")
         return {
-            "EUR":1.0, "USD":0.93, "GBP":1.15,
-            "EGP":0.03, "CHF":1.04, "AED":0.25, "JPY":0.0062
-        }
+        "EUR":1.0, "USD":0.93, "GBP":1.15,
+        "EGP":0.03, "CHF":1.04, "AED":0.25, "JPY":0.0062
+    }
 
 # ------------------------------------------------------------------ CLI
 def main():
