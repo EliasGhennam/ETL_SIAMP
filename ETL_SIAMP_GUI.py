@@ -4,7 +4,7 @@
 ETL_SIAMP_GUI.py – Interface PyQt6 améliorée
 -------------------------------------------------
 • Mode API / Manuel avec masquage dynamique.
-• Sélecteur de date (calendrier popup) pour taux historiques.
+• Sélecteur de date + chargement historique des taux.
 • Glisser‑déposer de fichiers Excel + ajout/retrait.
 • Console en temps réel + barre de progression.
 • Exécute le script core `ETL_SIAMP.py` via subprocess.
@@ -16,6 +16,7 @@ import sys
 import subprocess
 from typing import List
 
+import requests
 from PyQt6.QtCore   import Qt, QThread, pyqtSignal, QDate
 from PyQt6.QtGui    import QIcon, QAction, QKeySequence
 from PyQt6.QtWidgets import (
@@ -24,9 +25,9 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit, QProgressBar, QDateEdit
 )
 
-SCRIPT_CORE   = "ETL_SIAMP.py"
-ICON_PATH     = "siamp_icon.ico"
-CONFIG_FILE   = "siamp_api_key.cfg"
+SCRIPT_CORE = "ETL_SIAMP.py"
+ICON_PATH   = "siamp_icon.ico"
+CONFIG_FILE = "siamp_api_key.cfg"
 ***REMOVED***
 
 
@@ -47,8 +48,6 @@ class Worker(QThread):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            encoding="utf-8",    # force UTF‑8 pour éviter UnicodeDecodeError
-            errors="replace",
             env=self.env
         )
         for line in proc.stdout:
@@ -66,6 +65,7 @@ class Worker(QThread):
 # ---------------------------------------------------------------- DropListWidget
 class DropListWidget(QListWidget):
     """Zone de liste acceptant le glisser‑déposer de fichiers .xlsx"""
+
     def __init__(self):
         super().__init__()
         self.setAcceptDrops(True)
@@ -100,7 +100,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._apply_style()
 
-    # ---------- UI ----------
+    # ---------- UI construction ----------
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -108,7 +108,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
 
-        # ► Mode API / Manuel
+        # Mode API / Manuel
         row_mode = QHBoxLayout()
         row_mode.addWidget(QLabel("Mode de conversion :"))
         self.cbo_mode = QComboBox()
@@ -118,7 +118,19 @@ class MainWindow(QMainWindow):
         row_mode.addStretch()
         layout.addLayout(row_mode)
 
-        # ► Clé API
+        # ► Sélecteur de date + bouton Charger taux
+        row_date = QHBoxLayout()
+        row_date.addWidget(QLabel("Date des taux :"))
+        self.date_edit = QDateEdit(QDate.currentDate())
+        self.date_edit.setCalendarPopup(True)
+        row_date.addWidget(self.date_edit)
+        btn_rates = QPushButton("Charger taux")
+        btn_rates.clicked.connect(self._load_rates)
+        row_date.addWidget(btn_rates)
+        row_date.addStretch()
+        layout.addLayout(row_date)
+
+        # Clé API
         self.row_api = QHBoxLayout()
         self.row_api.addWidget(QLabel("Clé API (currencyapi.net) :"))
         self.txt_api = QLineEdit(self._load_api())
@@ -126,27 +138,19 @@ class MainWindow(QMainWindow):
         self.row_api.addWidget(self.txt_api)
         layout.addLayout(self.row_api)
 
-        # ► Taux manuel
+        # Taux manuel
         self.row_manual = QHBoxLayout()
         self.row_manual.addWidget(QLabel("Taux manuels (USD=0.93,GBP=1.15) :"))
         self.txt_manual = QLineEdit()
         self.row_manual.addWidget(self.txt_manual)
         layout.addLayout(self.row_manual)
 
-        # ► Sélecteur de date
-        row_date = QHBoxLayout()
-        row_date.addWidget(QLabel("Date des taux :"))
-        self.date_edit = QDateEdit(QDate.currentDate())
-        self.date_edit.setCalendarPopup(True)
-        row_date.addWidget(self.date_edit)
-        layout.addLayout(row_date)
-
-        # ► Liste de fichiers
+        # Liste de fichiers
         layout.addWidget(QLabel("Fichiers Excel :"))
         self.lst_files = DropListWidget()
         layout.addWidget(self.lst_files)
 
-        # ► Boutons Ajouter / Retirer
+        # Boutons Ajouter / Retirer
         btn_bar = QHBoxLayout()
         btn_add = QPushButton("Ajouter…")
         btn_add.clicked.connect(self._add_files)
@@ -158,7 +162,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(btn_bar)
         self.lst_files.setAlternatingRowColors(True)
 
-        # ► Touche Suppr
+        # Touche Suppr
         delete_act = QAction(
             self,
             shortcut=QKeySequence(Qt.Key.Key_Delete),
@@ -166,7 +170,7 @@ class MainWindow(QMainWindow):
         )
         self.lst_files.addAction(delete_act)
 
-        # ► Chemin de sortie
+        # Chemin de sortie
         row_out = QHBoxLayout()
         row_out.addWidget(QLabel("Fichier de sortie :"))
         self.txt_out = QLineEdit("fusion.xlsx")
@@ -176,25 +180,25 @@ class MainWindow(QMainWindow):
         row_out.addWidget(btn_out)
         layout.addLayout(row_out)
 
-        # ► Barre de progression
+        # Barre de progression
         self.pbar = QProgressBar()
         self.pbar.setMaximum(100)
         self.pbar.setValue(0)
         layout.addWidget(self.pbar)
 
-        # ► Bouton Lancer
+        # Bouton Lancer
         btn_run = QPushButton("▶ Lancer")
         btn_run.setMinimumHeight(38)
         btn_run.clicked.connect(self._run_etl)
         layout.addWidget(btn_run)
 
-        # ► Console intégrée
+        # Console intégrée
         self.txt_log = QPlainTextEdit()
         self.txt_log.setReadOnly(True)
         self.txt_log.setMaximumBlockCount(1000)
         layout.addWidget(self.txt_log, stretch=2)
 
-        # initialise la visibilité
+        # Initialise la visibilité
         self._toggle_mode(self.cbo_mode.currentText())
 
     # ---------- style ----------
@@ -259,25 +263,19 @@ class MainWindow(QMainWindow):
         if mode == "API":
             self._save_api_key(api)
 
-        # récupère la date au format YYYY‑MM‑DD
-        date_str = self.date_edit.date().toString("yyyy-MM-dd")
-
-        cmd = [
-            sys.executable, SCRIPT_CORE,
-            "--date", date_str,
-            "--chemin_sortie", out,
-            "--fichiers", *files
-        ]
+        cmd = [sys.executable, SCRIPT_CORE,
+               "--chemin_sortie", out,
+               "--fichiers", *files]
         if man:
             cmd += ["--taux_manuels", man]
 
         env = dict(os.environ, GOOEY="0")
 
-        # reset UI
+        # Reset UI
         self.txt_log.clear()
         self.pbar.setValue(0)
 
-        # démarre le worker
+        # Start worker
         self.worker = Worker(cmd, env)
         self.worker.log.connect(self.txt_log.appendPlainText)
         self.worker.progress.connect(self.pbar.setValue)
@@ -291,6 +289,64 @@ class MainWindow(QMainWindow):
             "Terminé" if ok else "Erreur",
             "Traitement terminé avec succès !" if ok else "Le script a échoué."
         )
+
+    def _load_rates(self):
+        key = self.txt_api.text().strip()
+        if not key:
+            QMessageBox.warning(self, "Erreur", "Saisissez d'abord la clé API.")
+            return
+
+        date = self.date_edit.date().toString("yyyy-MM-dd")
+        # 1️⃣ tentative historique
+        url_hist = "https://currencyapi.net/api/v1/history"
+        params = {"key": key, "date": date}
+        try:
+            resp = requests.get(url_hist, params=params, timeout=10)
+            # si plan gratuit refuse l'historique
+            if resp.status_code == 400:
+                raise requests.HTTPError("Historique non dispo en free‑plan")
+            resp.raise_for_status()
+            data = resp.json()
+            self.txt_log.appendPlainText(f"📅 Taux du {date} (historique) :")
+            raw = data.get("rates", {})
+
+        except requests.HTTPError:
+            # 2️⃣ fallback vers live rates
+            self.txt_log.appendPlainText("⚠ Historique non dispo → bascule en temps réel")
+            url_live = "https://currencyapi.net/api/v1/rates"
+            try:
+                resp = requests.get(url_live, params={"key": key}, timeout=10)
+                resp.raise_for_status()
+                data = resp.json()
+                raw = data.get("rates", {})
+                self.txt_log.appendPlainText("📅 Taux en temps réel :")
+            except Exception as e:
+                QMessageBox.critical(self, "Erreur API", f"Impossible de charger les taux :\n{e}")
+                return
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur API", f"Impossible de charger les taux :\n{e}")
+            return
+
+        # On récupère la valeur EUR brute (pour recalculer l’ensemble en base EUR)
+        eur_rate = float(raw.get("EUR", 1.0))
+
+        # Affichage recalculé en base EUR
+        for cur, val in sorted(raw.items()):
+            try:
+                r = float(val)
+                rate_eur = 1.0 if cur == "EUR" else eur_rate / r
+                self.txt_log.appendPlainText(f"  • {cur:<4} → {rate_eur:.6f}")
+            except:
+                continue
+
+        # Si l’API renvoie un budget de requêtes, on l’affiche
+        budget = data.get("budget", {})
+        if budget:
+            restant = budget.get("remaining", "–")
+            self.txt_log.appendPlainText(f"\n🔢 Requêtes restantes ce mois : {restant}")
+
+        self.txt_log.appendPlainText("")
 
     # ---------- helpers ----------
     def _load_api(self) -> str:

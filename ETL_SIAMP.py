@@ -1,16 +1,24 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-ETL_SIAMP.py – fusion & enrichissement Turnover
--------------------------------------------------
+ETL_SIAMP.py – fusion & enrichissement Turnover
+
+• Récupère les taux historiques si votre plan le permet (/historical),
+  sinon bascule automatiquement sur le temps réel (/rates).
 • Ajoute VARIABLE COSTS (CD+FSD) et COGS (PRU) quelle que soit l’écriture.
 • Maintient le calcul « C.A en € ».
-• Prend en charge un argument --date pour taux historiques via currencyapi.net.
-• Replace les colonnes dans l’ordre métier.
+• Réordonne les colonnes métier.
 """
 from __future__ import annotations
-import argparse, glob, io, os, re, sys, warnings
+import argparse
+import glob
+import io
+import os
+import re
+import sys
+import warnings
 from time import sleep
+from typing import Any
 
 import pandas as pd
 import requests
@@ -21,153 +29,175 @@ from openpyxl.utils import get_column_letter
 # ------------------------------------------------------------------ console UTF‑8
 if sys.stdout and hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
 ***REMOVED***
 
 # ------------------------------------------------------------------ taux de change
-def get_live_conversion_rates(date: str | None = None) -> dict[str, float]:
+def get_conversion_rates(date: str | None = None) -> dict[str, float]:
     """
-    Récupère les taux via currencyapi.net.
-    Si `date` est fournie (YYYY-MM-DD), récupère les taux historiques.
+    Récupère un dict de taux de change en base EUR.
+    - date=None          : temps réel via /rates
+    - date="YYYY-MM-DD"  : historique via /historical
+    En cas de 400 sur l'historique (plan gratuit), bascule sur le temps réel.
     """
-    url = "https://currencyapi.net/api/v1/rates"
-    params = {"key": API_KEY}
     if date:
-        params["date"] = date
+        url    = "https://currencyapi.net/api/v1/historical"
+        params = {"key": API_KEY, "date": date, "base_currency": "EUR"}
+        ctx    = f" au {date}"
+    else:
+        url    = "https://currencyapi.net/api/v1/rates"
+        params = {"key": API_KEY, "base_currency": "EUR"}
+        ctx    = " en temps réel"
+
     try:
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        data = r.json()
+        resp = requests.get(url, params=params, timeout=10)
+        # si historique non dispo (400), retomber sur rates
+        if resp.status_code == 400 and date:
+            print(f"[WARN] Historique non dispo ({resp.status_code}), bascule en temps réel.")
+            return get_conversion_rates(date=None)
+
+        resp.raise_for_status()
+        data = resp.json()
         if not data.get("valid", False):
-            raise ValueError("clé API invalide ou réponse incorrecte")
-        rates = {k.upper(): float(v) for k, v in data["rates"].items() if float(v)}
+            raise ValueError("Réponse API invalide")
+
+        raw = data.get("rates", {})
+        rates: dict[str, float] = {}
+        for code, val in raw.items():
+            try:
+                f = float(val)
+                if f != 0:
+                    rates[code.upper()] = f
+            except Exception:
+                continue
+        # garantissons qu'EUR existe à 1
         rates["EUR"] = 1.0
-        print("[INFO] ✅ taux API chargés" + (f" ({date})" if date else ""))
+
+        print(f"[INFO] ✅ Taux de conversion{ctx} chargés :")
+        for k, v in rates.items():
+            print(f"  → {k} = {round(v,6)} (unités/{ '€' if date is None else '€' })")
         return rates
+
     except Exception as e:
-        print(f"[WARN] API devise indisponible : {e} – repli local")
+        print(f"[ERROR] Impossible de charger les taux{ctx} : {e}")
+        print("[INFO] Repli sur taux locaux par défaut…")
         return {
-            "EUR":1.0,"USD":0.93,"GBP":1.15,"EGP":0.03,
-            "CHF":1.04,"AED":0.25,"JPY":0.0062
+            "EUR":1.0, "USD":0.93, "GBP":1.15,
+            "EGP":0.03, "CHF":1.04, "AED":0.25, "JPY":0.0062
         }
 
 # ------------------------------------------------------------------ CLI
 def main():
-    p = argparse.ArgumentParser(description="Fusion fichiers Turnover")
-    p.add_argument("--fichiers", nargs='+', required=True)
-    p.add_argument("--chemin_sortie", required=True)
-    p.add_argument("--taux_manuels")
-    p.add_argument("--date", help="Date pour taux historiques (YYYY-MM-DD)")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser(description="Fusionnez plusieurs fichiers Excel Turnover")
+    parser.add_argument("--fichiers",      nargs='+', required=True)
+    parser.add_argument("--chemin_sortie", required=True)
+    parser.add_argument("--taux_manuels",  help="USD=0.93,GBP=1.15", default=None)
+    parser.add_argument("--date",          help="YYYY-MM-DD pour historique (premium)", default=None)
+    args = parser.parse_args()
 
-    # parse taux manuels
-    def parse_taux_manuels(s: str | None) -> dict[str, float]:
-        d = {}
-        if not s: return d
-        for part in s.split(","):
+    # parse manuels
+    manu: dict[str,float] = {}
+    if args.taux_manuels:
+        for part in args.taux_manuels.split(","):
             try:
-                c, v = part.split("=")
-                d[c.strip().upper()] = float(v)
+                c,v = part.split("=")
+                manu[c.strip().upper()] = float(v)
             except:
-                print(f"[WARN] taux manuel ignoré : {part}")
-        return d
+                print(f"[WARN] taux manuel ignoré: {part}")
 
     # collecte fichiers
     files: list[str] = []
     for patt in args.fichiers:
         files.extend(glob.glob(patt))
-    files = [f for f in files if f.lower().endswith(".xlsx") and not os.path.basename(f).startswith("~$")]
+    files = [f for f in files if f.lower().endswith(".xlsx")
+             and not os.path.basename(f).startswith("~$")]
     if not files:
         sys.exit("Aucun fichier .xlsx trouvé.")
 
-    # prépare sortie
     out = args.chemin_sortie
     if not out.lower().endswith(".xlsx"):
         out += ".xlsx"
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
 
     # patterns
-    TURN_SHEET = re.compile(r"^TURNOVER($|\s+\w+\s+\d+)$", re.I)
-    VAR_PATTS  = [r"^CD\s*\+\s*FSD", r"^VARIABLE\s*COSTS?"]
+    TURNOVER_SHEET = re.compile(r"^TURNOVER($|\s+[A-Z][a-z]{2}\s+\d{1,2}$)", re.I)
+    VAR_PATTS  = [r"^CD\s*\+\s*FSD", r"^CD\+FSD", r"^VARIABLE\s*COSTS?"]
     COGS_PATTS = [r"^PRU", r"^COGS"]
 
-    # récupère taux (avec historical si demandé)
-    rates = get_live_conversion_rates(args.date)
-    # sauce manuelle
-    manual = parse_taux_manuels(args.taux_manuels)
-    rates.update(manual)
+    # récupère les taux (historique ou réel)
+    rates = get_conversion_rates(args.date)
+    rates.update(manu)
 
-    all_df: list[pd.DataFrame] = []
+    all_dfs: list[pd.DataFrame] = []
+    total = len(files)
     for idx, path in enumerate(files, 1):
-        print(f"[{idx}/{len(files)}] {os.path.basename(path)}")
+        print(f"[{idx}/{total}] {os.path.basename(path)}")
         try:
             xls = pd.ExcelFile(path, engine="openpyxl")
-            for sh in filter(TURN_SHEET.match, xls.sheet_names):
+            for sh in filter(TURNOVER_SHEET.match, xls.sheet_names):
                 df = xls.parse(sh, usecols="A:Q")
                 df.dropna(axis=1, how="all", inplace=True)
-                df.columns = [c.strip().upper() for c in df.columns]
+                df.columns = [c.strip() for c in df.columns]
 
                 # renommage
-                ren = {}
+                ren: dict[str,str] = {}
                 for c in df.columns:
-                    u = c.upper()
-                    if any(re.match(p, u) for p in VAR_PATTS):
+                    U = c.upper()
+                    if any(re.match(p,U) for p in VAR_PATTS):
                         ren[c] = "VARIABLE COSTS"
-                    elif any(re.match(p, u) for p in COGS_PATTS):
+                    elif any(re.match(p,U) for p in COGS_PATTS):
                         ren[c] = "COGS"
-                    elif u == "TURNOVER":
+                    elif U=="TURNOVER":
                         ren[c] = "TURNOVER"
-                    elif u == "CURRENCY":
+                    elif U=="CURRENCY":
                         ren[c] = "CURRENCY"
-                    elif u in ("CUSTOMER","CUSTOMER NAME"):
+                    elif U in {"CUSTOMER","CUSTOMER NAME"}:
                         ren[c] = "CUSTOMER NAME"
                 df.rename(columns=ren, inplace=True)
 
-                # log detection
-                has_var = "VARIABLE COSTS" in df.columns
-                has_cogs= "COGS" in df.columns
-                if not (has_var or has_cogs):
-                    print(f"  [INFO] ni VARIABLE COSTS ni COGS dans « {sh} »")
-                else:
-                    if has_var:
-                        nv = df["VARIABLE COSTS"].notna().sum()
-                        print(f"   • VARIABLE COSTS → {nv} valeurs non nulles")
-                    if has_cogs:
-                        nc = df["COGS"].notna().sum()
-                        print(f"   • COGS           → {nc} valeurs non nulles")
+                print("    -> Colonnes:", ", ".join(df.columns))
+
+                # log var/cogs
+                for nm in ("VARIABLE COSTS","COGS"):
+                    if nm in df.columns:
+                        n = df[nm].notna().sum()
+                        print(f"       • {nm} détectée: {n} valeurs non-null")
 
                 # calcul C.A en €
-                if {"CURRENCY","TURNOVER"} <= set(df.columns):
+                if {"TURNOVER","CURRENCY"} <= set(df.columns):
                     df.insert(
                         df.columns.get_loc("TURNOVER")+1,
                         "C.A en €",
-                        df.apply(lambda r: round(r["TURNOVER"] / rates.get(r["CURRENCY"],1),2)
-                                 if pd.notna(r["TURNOVER"]) else None, axis=1)
+                        df.apply(lambda r: round(r["TURNOVER"] / rates.get(r["CURRENCY"].upper(),1),2)
+                                 if pd.notna(r["TURNOVER"]) else None,
+                                 axis=1)
                     )
 
                 df["NOMFICHIER"] = os.path.basename(path)
                 df["FEUILLE"]     = sh
-                all_df.append(df)
-        except Exception as e:
-            print(f"  [ERR] {path}: {e}")
-        sleep(0.05)
-        print(f"PROGRESS:{int(idx/len(files)*100)}%")
+                all_dfs.append(df)
 
-    if not all_df:
+        except Exception as e:
+            print(f"  [ERROR] {path}: {e}")
+
+        sleep(0.05)
+        print(f"PROGRESS:{int(idx/total*100)}%")
+
+    if not all_dfs:
         sys.exit("Aucune feuille valide trouvée.")
 
-    # fusion & ordre
-    fusion = pd.concat(all_df, ignore_index=True)
+    fusion = pd.concat(all_dfs, ignore_index=True)
+
     ORDER = [
         "MONTH","SIAMP UNIT","SALE TYPE","TYPE OF CANAL","ENSEIGNE","CUSTOMER NAME",
         "COMMERCIAL AREA","SUR FAMILLE","FAMILLE","REFERENCE","PRODUCT NAME",
         "QUANTITY","TURNOVER","CURRENCY","COUNTRY","C.A en €",
         "VARIABLE COSTS","COGS","NOMFICHIER","FEUILLE"
     ]
-    cols = [c for c in ORDER if c in fusion.columns] + [c for c in fusion.columns if c not in ORDER]
-    fusion = fusion[cols]
+    fusion = fusion[[c for c in ORDER if c in fusion.columns]
+                    + [c for c in fusion.columns if c not in ORDER]]
+
     fusion.to_excel(out, index=False)
 
     # mise en forme Excel
