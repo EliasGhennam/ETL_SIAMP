@@ -39,36 +39,116 @@ import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
-def get_ecb_rates():
-    url = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
+def get_ecb_rates(date: str | None = None, required_currencies: set[str] | None = None):
+    print(f"[DEBUG] Appel get_ecb_rates(date={date})", flush=True)
+    if date:
+        url = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.xml"
+    else:
+        url = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
+
     try:
         response = requests.get(url)
+        print(f"[INFO] 📡 Requête vers {url}", flush=True)
+        print(f"[INFO] ✅ Statut : {response.status_code}", flush=True)
         response.raise_for_status()
 
         root = ET.fromstring(response.content)
         ns = {'ns': 'http://www.ecb.int/vocabulary/2002-08-01/eurofxref'}
-        
-        # cherche la section Cube avec l'attribut time
-        cubes = root.findall(".//Cube[@time]")
-        if not cubes:
-            raise ValueError("Pas de données de taux trouvées")
 
-        latest_cube = cubes[0]
-        date = latest_cube.attrib["time"]
         rates = {"EUR": 1.0}
+        from datetime import datetime, timedelta
 
-        for cube in latest_cube.findall("Cube"):
+        if date:
+            limit_date = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=60)).strftime("%Y-%m-%d")
+            print(f"[INFO] 🔍 Recherche limitée aux taux entre {limit_date} et {date}", flush=True)
+
+
+
+        dates = [cube.attrib["time"] for cube in root.findall(".//ns:Cube[@time]", ns)]
+        if date:
+            dates = sorted([d for d in dates if limit_date <= d <= date], reverse=True)
+        else:
+            dates = sorted(dates, reverse=True)
+
+
+        rates_found = set(rates.keys())
+        target_cube = None
+
+        for d in dates:
+            cube_d = root.find(f".//ns:Cube[@time='{d}']", ns)
+            if cube_d is None:
+                continue
+
+            for cube in cube_d.findall("ns:Cube", ns):
+                cur = cube.attrib["currency"]
+                if cur not in rates:
+                    rate = float(cube.attrib["rate"])
+                    rates[cur] = rate
+                    print(f"[INFO] ➕ Taux récupéré pour {cur} au {d} = {rate}", flush=True)
+                    rates_found.add(cur)
+
+            if required_currencies and required_currencies <= rates_found:
+                print(f"[INFO] ✅ Tous les taux requis trouvés avant {d}", flush=True)
+                break
+
+
+        if date:
+            # chercher le jour exact OU le plus proche avant
+            dates = [cube.attrib["time"] for cube in root.findall(".//ns:Cube[@time]", ns)]
+            print(f"[INFO] 📅 {len(dates)} dates trouvées dans l'historique ECB", flush=True)
+            print(f"[INFO] 📅 Premières dates disponibles : {dates[:5]}", flush=True)
+            dates.sort(reverse=True)
+            target_date = None
+            for d in dates:
+                if d <= date:
+                    target_date = d
+                    break
+
+            if not target_date:
+                raise ValueError(f"Aucun taux trouvé avant la date {date}")
+
+            target_cube = root.find(f".//ns:Cube[@time='{target_date}']", ns)
+            if target_date != date:
+                print(f"[INFO] ⚠️ Pas de taux pour {date}, utilisation de {target_date} à la place", flush=True)
+            else:
+                print(f"[INFO] ✅ Taux trouvés pour la date exacte : {target_date}", flush=True)
+
+
+            if target_date != date:
+                print(f"[INFO] ⚠ Aucun taux pour {date}, substitution par {target_date}", flush=True)
+        else:
+            # date non spécifiée : dernier taux connu
+            cubes = root.findall(".//Cube[@time]")
+            if not cubes:
+                raise ValueError("Pas de données de taux trouvées")
+            target_cube = cubes[0]
+            target_date = target_cube.attrib["time"]
+        
+        print("[INFO] 🔎 Récupération des taux de conversion :", flush=True)
+        for cube in target_cube.findall("ns:Cube", ns):
             currency = cube.attrib["currency"]
-            rate = float(cube.attrib["rate"])
-            rates[currency] = rate
+            raw_rate = float(cube.attrib["rate"])
+            print(f"  → {currency} = {raw_rate}", flush=True)
+            if raw_rate != 0:
+                rates[currency] = raw_rate
+        rates["EUR"] = 1.0
 
-        print(f"[INFO] Taux ECB récupérés au {date}")
+        if required_currencies:
+            missing = required_currencies - rates_found
+            if missing:
+                print(f"[WARN] ❌ Aucun taux trouvé pour {sorted(missing)} dans les 60 derniers jours.", flush=True)
+                print(f"[SUGGESTION] ✍️ Veuillez les ajouter manuellement dans l'interface ou en ligne de commande.", flush=True)
+
+
+
+        print(f"[INFO] Taux ECB récupérés au {date}", flush=True)
         for k, v in rates.items():
             print(f"  → {k} = {v}")
         return rates
 
     except Exception as e:
-        print(f"[ERROR] Erreur récupération ECB : {e}")
+        print(f"[ERROR] Erreur récupération ECB : {e}", flush=True)
+        print("[FALLBACK] 🛑 Repli sur taux locaux codés en dur", flush=True)
         return {
         "EUR":1.0, "USD":0.93, "GBP":1.15,
         "EGP":0.03, "CHF":1.04, "AED":0.25, "JPY":0.0062
@@ -82,6 +162,9 @@ def main():
     parser.add_argument("--taux_manuels",  help="USD=0.93,GBP=1.15", default=None)
     parser.add_argument("--date",          help="YYYY-MM-DD pour historique (premium)", default=None)
     args = parser.parse_args()
+    devises_detectées: set[str] = set()
+
+    print(f"[DEBUG] 👋 Script lancé avec date = {args.date}", flush=True)
 
     # parse manuels
     manu: dict[str,float] = {}
@@ -91,7 +174,7 @@ def main():
                 c,v = part.split("=")
                 manu[c.strip().upper()] = float(v)
             except:
-                print(f"[WARN] taux manuel ignoré: {part}")
+                print(f"[WARN] taux manuel ignoré: {part}", flush=True)
 
     # collecte fichiers
     files: list[str] = []
@@ -112,14 +195,10 @@ def main():
     VAR_PATTS  = [r"^CD\s*\+\s*FSD", r"^CD\+FSD", r"^VARIABLE\s*COSTS?"]
     COGS_PATTS = [r"^PRU", r"^COGS"]
 
-    # récupère les taux (historique ou réel)
-    rates = get_conversion_rates(args.date)
-    rates.update(manu)
-
     all_dfs: list[pd.DataFrame] = []
     total = len(files)
     for idx, path in enumerate(files, 1):
-        print(f"[{idx}/{total}] {os.path.basename(path)}")
+        print(f"[{idx}/{total}] {os.path.basename(path)}", flush=True)
         try:
             xls = pd.ExcelFile(path, engine="openpyxl")
             for sh in filter(TURNOVER_SHEET.match, xls.sheet_names):
@@ -143,38 +222,59 @@ def main():
                         ren[c] = "CUSTOMER NAME"
                 df.rename(columns=ren, inplace=True)
 
-                print("    -> Colonnes:", ", ".join(df.columns))
+                print("    -> Colonnes:", ", ".join(df.columns), flush=True)
 
                 # log var/cogs
                 for nm in ("VARIABLE COSTS","COGS"):
                     if nm in df.columns:
                         n = df[nm].notna().sum()
-                        print(f"       • {nm} détectée: {n} valeurs non-null")
-
-                # calcul C.A en €
-                if {"TURNOVER","CURRENCY"} <= set(df.columns):
-                    df.insert(
-                        df.columns.get_loc("TURNOVER")+1,
-                        "C.A en €",
-                        df.apply(lambda r: round(r["TURNOVER"] / rates.get(r["CURRENCY"].upper(),1),2)
-                                 if pd.notna(r["TURNOVER"]) else None,
-                                 axis=1)
-                    )
+                        print(f"       • {nm} détectée: {n} valeurs non-null", flush=True)
 
                 df["NOMFICHIER"] = os.path.basename(path)
                 df["FEUILLE"]     = sh
                 all_dfs.append(df)
 
         except Exception as e:
-            print(f"  [ERROR] {path}: {e}")
+            print(f"  [ERROR] {path}: {e}", flush=True)
 
         sleep(0.05)
-        print(f"PROGRESS:{int(idx/total*100)}%")
+        print(f"PROGRESS:{int(idx/total*100)}%", flush=True)
 
     if not all_dfs:
         sys.exit("Aucune feuille valide trouvée.")
 
+    # ➕ Convertir en majuscules (important)
+    devises_detectées = {d.upper() for d in devises_detectées}
+
+    # ✅ Maintenant que les devises sont détectées, on appelle la fonction
+    rates = get_ecb_rates(args.date, required_currencies=devises_detectées)
+    rates.update(manu)
+
     fusion = pd.concat(all_dfs, ignore_index=True)
+
+    fusion["CURRENCY"] = fusion["CURRENCY"].str.strip().str.upper()
+    fusion["Taux €"] = fusion["CURRENCY"].map(rates)
+
+    fusion["C.A en €"] = fusion.apply(
+        lambda row: row["TURNOVER"] * row["Taux €"]
+        if pd.notnull(row.get("TURNOVER")) and pd.notnull(row.get("Taux €"))
+        else None,
+        axis=1
+    )
+
+
+    dev_non_gérées = devises_detectées - rates.keys()
+
+    print(f"[INFO] 🏦 Devises détectées dans les fichiers : {sorted(devises_detectées)}", flush=True)
+    print(f"[INFO] ✅ Taux disponibles ECB : {sorted(rates.keys())}", flush=True)
+
+    if dev_non_gérées:
+        print(f"[WARN] ⚠ Les devises suivantes n'ont pas de taux ECB : {sorted(dev_non_gérées)}", flush=True)
+    else:
+        print(f"[INFO] 🎉 Tous les taux de devises sont disponibles 🎯", flush=True)
+
+
+    
 
     ORDER = [
         "MONTH","SIAMP UNIT","SALE TYPE","TYPE OF CANAL","ENSEIGNE","CUSTOMER NAME",
@@ -201,7 +301,7 @@ def main():
                 cell.number_format = u"#,##0.00\u00a0€"
     wb.save(out)
 
-    print(f"\n✅ Fusion terminée – fichier créé : {out}\n")
+    print(f"\n✅ Fusion terminée – fichier créé : {out}\n", flush=True)
 
 
 if __name__ == "__main__":

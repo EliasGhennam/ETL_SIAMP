@@ -11,6 +11,9 @@ ETL_SIAMP_GUI.py – Interface PyQt6 améliorée
 from __future__ import annotations
 import os
 import sys
+import re
+import pandas as pd
+import openpyxl
 import subprocess
 from typing import List
 import xml.etree.ElementTree as ET
@@ -47,7 +50,9 @@ class Worker(QThread):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            env=self.env
+            env=self.env,
+            encoding='utf-8',
+            errors='replace'  # pour éviter le crash si un caractère est inconnu
         )
         for line in proc.stdout:
             line = line.rstrip()
@@ -221,17 +226,20 @@ class MainWindow(QMainWindow):
         if not out:
             return QMessageBox.warning(self, "Erreur", "Spécifiez le fichier de sortie.")
 
-        mode = self.cbo_mode.currentText()
         man  = self.txt_manual.text().strip()
 
-        if mode == "Manuel" and not man:
-            return QMessageBox.warning(self, "Erreur", "Saisissez les taux manuels ou changez de mode.")
-
+        if not man:
+            self.txt_log.appendPlainText("💡 Aucun taux manuel saisi. Le programme utilisera uniquement les taux ECB.")
         cmd = [sys.executable, SCRIPT_CORE,
                "--chemin_sortie", out,
                "--fichiers", *files]
         if man:
             cmd += ["--taux_manuels", man]
+
+        # toujours ajouter la date, qu’il y ait taux manuels ou non
+        date_str = self.date_edit.date().toString("yyyy-MM-dd")
+        cmd += ["--date", date_str]
+
 
         env = dict(os.environ, GOOEY="0")
 
@@ -256,15 +264,54 @@ class MainWindow(QMainWindow):
 
     def _load_rates(self):
         try:
+            from datetime import datetime, timedelta
             from ETL_SIAMP import get_ecb_rates
-            rates = get_ecb_rates()
-            date = datetime.today().strftime("%Y-%m-%d")
+
+            date = self.date_edit.date().toString("yyyy-MM-dd")
+            limit_date = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=60)).strftime("%Y-%m-%d")
+            rates = get_ecb_rates(date)
+
+            # ➕ Ajouter manuellement les devises non couvertes par l'ECB
+            rates.update({
+                "MAD": 0.094,
+                "TND": 0.30,
+                "DZD": 0.0068,
+                "XOF": 0.0015
+            })
+
+            # 🔎 Analyser les fichiers chargés pour détecter les devises utilisées
+            devises_utilisées = set()
+            TURNOVER_SHEET = re.compile(r"^TURNOVER($|\s+[A-Z][a-z]{2}\s+\d{1,2}$)", re.I)
+            for i in range(self.lst_files.count()):
+                path = self.lst_files.item(i).text()
+                try:
+                    xls = pd.ExcelFile(path, engine="openpyxl")
+                    for sh in filter(TURNOVER_SHEET.match, xls.sheet_names):
+                        df = xls.parse(sh, usecols="A:Q")
+                        df.columns = [str(c).strip().upper() for c in df.columns]
+                        if "CURRENCY" in df.columns:
+                            devises_utilisées.update(df["CURRENCY"].dropna().astype(str).str.strip().str.upper())
+                except Exception as e:
+                    self.txt_log.appendPlainText(f"[WARN] ⚠ Impossible de lire {path} : {e}")
+
+            # 🖨️ Affichage dans la console de l'UI
             self.txt_log.appendPlainText(f"📅 Taux de change ECB au {date} :\n")
-            for cur, rate in sorted(rates.items()):
-                self.txt_log.appendPlainText(f"  • {cur:<4} → {rate:.6f}")
+
+            if not devises_utilisées:
+                self.txt_log.appendPlainText("[INFO] Aucune devise détectée dans les fichiers, veuillez glisser déposer vos fichiers à traiter pour détécter les devises.\n")
+            else:
+                for cur in sorted(devises_utilisées):
+                    rate = rates.get(cur)
+                    if rate:
+                        self.txt_log.appendPlainText(f"  • {cur:<4} → {rate:.6f}")
+                    else:
+                        self.txt_log.appendPlainText(f"  • {cur:<4} → ❌ Non disponible à cette date, veuillez charger manuellement le taux.\n")
+
             self.txt_log.appendPlainText("")
+
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur lors de la récupération ECB :\n{e}")
+
 
 
 # --------------------------------------------------
