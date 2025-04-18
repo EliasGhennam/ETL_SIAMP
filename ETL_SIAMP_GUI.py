@@ -15,12 +15,13 @@ import re
 import pandas as pd
 import openpyxl
 import subprocess
+import shutil
 from typing import List
 import xml.etree.ElementTree as ET
 from datetime import datetime
 import requests
 from PyQt6.QtCore   import Qt, QThread, pyqtSignal, QDate
-from PyQt6.QtGui    import QIcon, QAction, QKeySequence
+from PyQt6.QtGui    import QIcon, QAction, QKeySequence, QPainter, QFont, QColor
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QFileDialog, QMessageBox, QListWidget, QComboBox,
@@ -45,36 +46,54 @@ class Worker(QThread):
         self.env = env
 
     def run(self):
-        proc = subprocess.Popen(
-            self.cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            env=self.env,
-            encoding='utf-8',
-            errors='replace'  # pour éviter le crash si un caractère est inconnu
-        )
-        for line in proc.stdout:
-            line = line.rstrip()
-            self.log.emit(line)
-            if line.startswith("PROGRESS:"):
-                try:
-                    pct = int(line.split(":")[1].strip().strip("% "))
-                    self.progress.emit(pct)
-                except ValueError:
-                    pass
-        self.done.emit(proc.wait() == 0)
+        with open("error_log.txt", "w", encoding="utf-8", errors="replace") as err_file:
+            proc = subprocess.Popen(
+                self.cmd,
+                stdout=subprocess.PIPE,
+                stderr=err_file,
+                text=True,
+                env=self.env,
+                encoding='utf-8',
+                errors='replace'
+            )
+            for line in proc.stdout:
+                line = line.rstrip()
+                self.log.emit(line)
+                if line.startswith("PROGRESS:"):
+                    try:
+                        pct = int(line.split(":")[1].strip().strip("% "))
+                        self.progress.emit(pct)
+                    except ValueError:
+                        pass
+            self.done.emit(proc.wait() == 0)
 
 
 # ---------------------------------------------------------------- DropListWidget
 class DropListWidget(QListWidget):
     """Zone de liste acceptant le glisser‑déposer de fichiers .xlsx"""
 
-    def __init__(self):
+    def __init__(self, on_click_callback=None):
         super().__init__()
         self.setAcceptDrops(True)
         self.setSelectionMode(self.SelectionMode.ExtendedSelection)
         self.setMinimumHeight(150)
+        self.on_click_callback = on_click_callback  # fonction à appeler au clic
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.count() == 0:
+            painter = QPainter(self.viewport())
+            painter.setPen(QColor("#777"))
+            font = QFont("Segoe UI", 10, QFont.Weight.Normal)
+            font.setItalic(True)
+            painter.setFont(font)
+            text = "Glissez vos fichiers Excel ici ou cliquez pour les sélectionner"
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, text)
+
+    def mousePressEvent(self, event):
+        if self.count() == 0 and self.on_click_callback:
+            self.on_click_callback()  # déclenche la fonction ajout fichiers
+        super().mousePressEvent(event)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -92,6 +111,7 @@ class DropListWidget(QListWidget):
 
     def files(self) -> List[str]:
         return [self.item(i).text() for i in range(self.count())]
+
 
 
 # ---------------------------------------------------------------- MainWindow
@@ -133,7 +153,7 @@ class MainWindow(QMainWindow):
 
         # Liste de fichiers
         layout.addWidget(QLabel("Fichiers Excel :"))
-        self.lst_files = DropListWidget()
+        self.lst_files = DropListWidget(on_click_callback=self._add_files)
         layout.addWidget(self.lst_files)
 
         # Boutons Ajouter / Retirer
@@ -227,33 +247,33 @@ class MainWindow(QMainWindow):
             return QMessageBox.warning(self, "Erreur", "Spécifiez le fichier de sortie.")
 
         man  = self.txt_manual.text().strip()
-
         if not man:
             self.txt_log.appendPlainText("💡 Aucun taux manuel saisi. Le programme utilisera uniquement les taux ECB.")
-        cmd = [sys.executable, SCRIPT_CORE,
-               "--chemin_sortie", out,
-               "--fichiers", *files]
+
+        # Chemin du script embarqué
+        base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+        script_path = os.path.join(base_path, "ETL_SIAMP.py")
+
+        # Trouve python.exe (depuis PATH ou venv)
+        python_exe = shutil.which("python") or sys.executable
+
+        cmd = [python_exe, script_path, "--chemin_sortie", out, "--fichiers", *files]
         if man:
             cmd += ["--taux_manuels", man]
-
-        # toujours ajouter la date, qu’il y ait taux manuels ou non
         date_str = self.date_edit.date().toString("yyyy-MM-dd")
         cmd += ["--date", date_str]
 
-
         env = dict(os.environ, GOOEY="0")
-
-        # Reset UI
         self.txt_log.clear()
         self.pbar.setValue(0)
 
-        # Start worker
         self.worker = Worker(cmd, env)
         self.worker.log.connect(self.txt_log.appendPlainText)
         self.worker.progress.connect(self.pbar.setValue)
         self.worker.done.connect(self._on_done)
         self.worker.start()
 
+        
     def _on_done(self, ok: bool):
         self.pbar.setValue(100 if ok else 0)
         QMessageBox.information(
