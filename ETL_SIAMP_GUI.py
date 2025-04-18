@@ -24,7 +24,7 @@ from PyQt6.QtGui    import QIcon, QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QFileDialog, QMessageBox, QListWidget, QComboBox,
-    QPlainTextEdit, QProgressBar, QDateEdit
+    QPlainTextEdit, QProgressBar, QDateEdit, QInputDialog
 )
 
 SCRIPT_CORE = "ETL_SIAMP.py"
@@ -297,17 +297,32 @@ class MainWindow(QMainWindow):
             # 🖨️ Affichage dans la console de l'UI
             self.txt_log.appendPlainText(f"📅 Taux de change ECB au {date} :\n")
 
+            taux_manuels = self.txt_manual.text().strip()
+            manuels = dict(part.split("=") for part in taux_manuels.split(",") if "=" in part)
+            manuels = {k.strip().upper(): float(v) for k, v in manuels.items()}
+            
             if not devises_utilisées:
                 self.txt_log.appendPlainText("[INFO] Aucune devise détectée dans les fichiers, veuillez glisser déposer vos fichiers à traiter pour détécter les devises.\n")
             else:
                 for cur in sorted(devises_utilisées):
-                    rate = rates.get(cur)
-                    if rate:
-                        self.txt_log.appendPlainText(f"  • {cur:<4} → {rate:.6f}")
+                    if cur in rates:
+                        self.txt_log.appendPlainText(f"  • {cur:<4} → {rates[cur]:.6f}")
+                    elif cur in manuels:
+                        self.txt_log.appendPlainText(f"  • {cur:<4} → {manuels[cur]:.6f} (manuel)")
                     else:
-                        self.txt_log.appendPlainText(f"  • {cur:<4} → ❌ Non disponible à cette date, veuillez charger manuellement le taux.\n")
+                        val, ok = QInputDialog.getDouble(
+                            self, f"Taux manquant pour {cur}",
+                            f"Aucun taux trouvé pour {cur}.\nEntrez le taux de conversion vers EUR :",
+                            min=0.0001, decimals=6
+                        )
+                        if ok:
+                            manuels[cur] = val
+                            self.txt_log.appendPlainText(f"  • {cur:<4} → {val:.6f} (ajouté manuellement)")
+                        else:
+                            self.txt_log.appendPlainText(f"  • {cur:<4} → ❌ Non disponible")
 
-            self.txt_log.appendPlainText("")
+                # Mise à jour du champ texte
+                self.txt_manual.setText(",".join(f"{k}={v}" for k, v in manuels.items()))
 
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur lors de la récupération ECB :\n{e}")
