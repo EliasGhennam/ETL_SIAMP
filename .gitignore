@@ -6,6 +6,7 @@ __pycache__/
 # Dossiers générés
 output/
 fichiers_excel/
+dist/
 
 # Si projet Node accidentellement ajouté
 node_modules/

@@ -124,6 +124,18 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._apply_style()
 
+    def _toggle_period_inputs(self):
+        mode = self.mode_combo.currentText()
+        if "mois" in mode.lower():
+            # Affiche uniquement le mois et l'année
+            fmt = "MM/yyyy"
+        else:
+            # Affiche jour, mois, année
+            fmt = "dd/MM/yyyy"
+        self.period_start.setDisplayFormat(fmt)
+        self.period_end.setDisplayFormat(fmt)
+
+
     # ---------- UI construction ----------
     def _build_ui(self):
         central = QWidget()
@@ -143,6 +155,28 @@ class MainWindow(QMainWindow):
         row_date.addWidget(btn_rates)
         row_date.addStretch()
         layout.addLayout(row_date)
+
+        # ▸ Choix du mode de période (mois ou jours)
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["Période au mois près", "Période au jour près"])
+        layout.addWidget(QLabel("Mode de sélection de la période :"))
+        layout.addWidget(self.mode_combo)
+
+        # ▸ Sélecteurs de dates (début et fin)
+        self.period_start = QDateEdit(QDate.currentDate())
+        self.period_start.setCalendarPopup(True)
+        self.period_end = QDateEdit(QDate.currentDate())
+        self.period_end.setCalendarPopup(True)
+
+        row_period = QHBoxLayout()
+        row_period.addWidget(QLabel("Du :"))
+        row_period.addWidget(self.period_start)
+        row_period.addWidget(QLabel("Au :"))
+        row_period.addWidget(self.period_end)
+        layout.addLayout(row_period)
+
+        self.mode_combo.currentIndexChanged.connect(self._toggle_period_inputs)
+        self._toggle_period_inputs()
 
         # Taux manuel
         self.row_manual = QHBoxLayout()
@@ -240,6 +274,24 @@ class MainWindow(QMainWindow):
 
     def _run_etl(self):
         files = self.lst_files.files()
+        # ➤ Détecter tous les mois distincts présents dans les fichiers
+        from collections import defaultdict
+        mois_detectés = defaultdict(list)
+
+        for path in files:
+            try:
+                xls = pd.ExcelFile(path, engine="openpyxl")
+                for sh in xls.sheet_names:
+                    df = xls.parse(sh, usecols="A:Q")
+                    df.columns = [c.strip().upper() for c in df.columns]
+                    if "MONTH" in df.columns:
+                        mois = pd.to_datetime(df["MONTH"], errors="coerce").dt.to_period("M")
+                        mois_uniques = sorted(mois.dropna().unique())
+                        for m in mois_uniques:
+                            mois_detectés[str(m)].append(os.path.basename(path))
+            except Exception as e:
+                self.txt_log.appendPlainText(f"[WARN] ⚠ Fichier ignoré : {path} – {e}")
+
         if not files:
             return QMessageBox.warning(self, "Erreur", "Ajoutez au moins un fichier Excel.")
         out = self.txt_out.text().strip()
@@ -264,6 +316,29 @@ class MainWindow(QMainWindow):
         cmd += ["--date", date_str]
 
         env = dict(os.environ, GOOEY="0")
+        # Récupérer les dates depuis period_start et period_end
+        from calendar import monthrange
+
+        mode = self.mode_combo.currentText()
+        if "mois" in mode.lower():
+            year_start = self.period_start.date().year()
+            month_start = self.period_start.date().month()
+            year_end = self.period_end.date().year()
+            month_end = self.period_end.date().month()
+
+            first_day = f"{year_start}-{month_start:02d}-01"
+            last_day = f"{year_end}-{month_end:02d}-{monthrange(year_end, month_end)[1]}"
+            date_debut = first_day
+            date_fin = last_day
+        else:
+            date_debut = self.period_start.date().toString("yyyy-MM-dd")
+            date_fin   = self.period_end.date().toString("yyyy-MM-dd")
+
+
+        if date_debut and date_fin:
+            cmd += ["--date_debut", date_debut, "--date_fin", date_fin]
+
+
         self.txt_log.clear()
         self.pbar.setValue(0)
 
