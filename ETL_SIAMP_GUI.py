@@ -16,6 +16,7 @@ import pandas as pd
 import openpyxl
 import subprocess
 import shutil
+import calendar
 from typing import List
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -124,17 +125,88 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._apply_style()
 
-    def _toggle_period_inputs(self):
-        mode = self.mode_combo.currentText()
-        if "mois" in mode.lower():
-            # Affiche uniquement le mois et l'année
-            fmt = "MM/yyyy"
-        else:
-            # Affiche jour, mois, année
-            fmt = "dd/MM/yyyy"
-        self.period_start.setDisplayFormat(fmt)
-        self.period_end.setDisplayFormat(fmt)
+    def _detect_months(self):
+        from collections import defaultdict
+        from PyQt6.QtWidgets import QDialog, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QPushButton
 
+        mois_detectés = defaultdict(list)
+        files = self.lst_files.files()
+
+        if not files:
+            QMessageBox.warning(self, "Erreur", "Ajoutez au moins un fichier Excel.")
+            return
+
+        # ➤ Détection des dates dans les fichiers
+        for path in files:
+            try:
+                xls = pd.ExcelFile(path, engine="openpyxl")
+                for sh in xls.sheet_names:
+                    df = xls.parse(sh, usecols="A:Q")
+                    df.columns = [c.strip().upper() for c in df.columns]
+                    if "MONTH" in df.columns:
+                        mois = pd.to_datetime(df["MONTH"], errors="coerce").dt.to_period("M")
+                        mois_uniques = sorted(mois.dropna().unique())
+                        for m in mois_uniques:
+                            mois_detectés[str(m)].append(os.path.basename(path))
+            except Exception as e:
+                self.txt_log.appendPlainText(f"[WARN] ⚠ Fichier ignoré : {path} – {e}")
+
+        if not mois_detectés:
+            QMessageBox.information(self, "Info", "Aucune date détectée dans les fichiers.")
+            return
+
+        # ➤ Création de la boîte de dialogue
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Sélectionnez les mois à traiter")
+        layout = QVBoxLayout(dialog)
+        tree = QTreeWidget()
+        tree.setHeaderLabel("Mois détectés")
+        tree.setColumnCount(1)
+        tree.setSelectionMode(QTreeWidget.SelectionMode.MultiSelection)
+        tree.setExpandsOnDoubleClick(True)
+
+        # ➤ Construction de l'arborescence années/mois
+        dates_groupées = defaultdict(set)
+        for period in mois_detectés:
+            annee, mois = period.split("-")
+            dates_groupées[annee].add(mois)
+
+        for annee, mois_set in sorted(dates_groupées.items()):
+            parent = QTreeWidgetItem([annee])
+            parent.setFlags(parent.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            parent.setCheckState(0, Qt.CheckState.Checked)
+            for mois in sorted(mois_set):
+                mois_int = int(mois)
+                mois_nom = calendar.month_name[mois_int].capitalize()  # → "Février"
+                child = QTreeWidgetItem([mois_nom])
+                child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                child.setCheckState(0, Qt.CheckState.Checked)
+                # ➡️ Important : stocker la vraie valeur numérique (ex. : "02") dans les "data"
+                child.setData(0, Qt.ItemDataRole.UserRole, mois)
+                parent.addChild(child)
+            tree.addTopLevelItem(parent)
+
+        layout.addWidget(tree)
+
+        btn_ok = QPushButton("Valider")
+        btn_ok.clicked.connect(dialog.accept)
+        layout.addWidget(btn_ok)
+
+        dialog.exec()
+
+        # ➤ Extraire les dates cochées
+        dates_choisies = []
+        for i in range(tree.topLevelItemCount()):
+            parent = tree.topLevelItem(i)
+            annee = parent.text(0)
+            for j in range(parent.childCount()):
+                child = parent.child(j)
+                if child.checkState(0) == Qt.CheckState.Checked:
+                    mois = child.data(0, Qt.ItemDataRole.UserRole)  # utilise le "data" plutôt que le texte affiché
+                    dates_choisies.append(f"{annee}-{mois}")
+        
+        self.mois_selectionnes = dates_choisies  # Stocke la sélection pour l'utiliser dans _run_etl
+        self.txt_log.appendPlainText(f"✅ Mois choisis : {self.mois_selectionnes}")
 
     # ---------- UI construction ----------
     def _build_ui(self):
@@ -156,28 +228,6 @@ class MainWindow(QMainWindow):
         row_date.addStretch()
         layout.addLayout(row_date)
 
-        # ▸ Choix du mode de période (mois ou jours)
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["Période au mois près", "Période au jour près"])
-        layout.addWidget(QLabel("Mode de sélection de la période :"))
-        layout.addWidget(self.mode_combo)
-
-        # ▸ Sélecteurs de dates (début et fin)
-        self.period_start = QDateEdit(QDate.currentDate())
-        self.period_start.setCalendarPopup(True)
-        self.period_end = QDateEdit(QDate.currentDate())
-        self.period_end.setCalendarPopup(True)
-
-        row_period = QHBoxLayout()
-        row_period.addWidget(QLabel("Du :"))
-        row_period.addWidget(self.period_start)
-        row_period.addWidget(QLabel("Au :"))
-        row_period.addWidget(self.period_end)
-        layout.addLayout(row_period)
-
-        self.mode_combo.currentIndexChanged.connect(self._toggle_period_inputs)
-        self._toggle_period_inputs()
-
         # Taux manuel
         self.row_manual = QHBoxLayout()
         self.row_manual.addWidget(QLabel("Taux manuels (USD=0.93,GBP=1.15) :"))
@@ -195,6 +245,10 @@ class MainWindow(QMainWindow):
         btn_add = QPushButton("Ajouter…")
         btn_add.clicked.connect(self._add_files)
         btn_bar.addWidget(btn_add)
+        btn_detect = QPushButton("🗓️ Détecter le ou les mois à traiter")
+        btn_detect.clicked.connect(self._detect_months)
+        btn_bar.addWidget(btn_detect)
+
         btn_rem = QPushButton("Retirer sélection")
         btn_rem.clicked.connect(self._remove_files)
         btn_bar.addWidget(btn_rem)
@@ -314,30 +368,11 @@ class MainWindow(QMainWindow):
             cmd += ["--taux_manuels", man]
         date_str = self.date_edit.date().toString("yyyy-MM-dd")
         cmd += ["--date", date_str]
+        if hasattr(self, "mois_selectionnes") and self.mois_selectionnes:
+            cmd += ["--mois_selectionnes", ",".join(self.mois_selectionnes)]
+
 
         env = dict(os.environ, GOOEY="0")
-        # Récupérer les dates depuis period_start et period_end
-        from calendar import monthrange
-
-        mode = self.mode_combo.currentText()
-        if "mois" in mode.lower():
-            year_start = self.period_start.date().year()
-            month_start = self.period_start.date().month()
-            year_end = self.period_end.date().year()
-            month_end = self.period_end.date().month()
-
-            first_day = f"{year_start}-{month_start:02d}-01"
-            last_day = f"{year_end}-{month_end:02d}-{monthrange(year_end, month_end)[1]}"
-            date_debut = first_day
-            date_fin = last_day
-        else:
-            date_debut = self.period_start.date().toString("yyyy-MM-dd")
-            date_fin   = self.period_end.date().toString("yyyy-MM-dd")
-
-
-        if date_debut and date_fin:
-            cmd += ["--date_debut", date_debut, "--date_fin", date_fin]
-
 
         self.txt_log.clear()
         self.pbar.setValue(0)
