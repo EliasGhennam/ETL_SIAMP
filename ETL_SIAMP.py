@@ -6,7 +6,7 @@ ETL_SIAMP.py – fusion & enrichissement Turnover
 • Récupère les taux historiques si votre plan le permet (/historical),
   sinon bascule automatiquement sur le temps réel (/rates).
 • Ajoute VARIABLE COSTS (CD+FSD) et COGS (PRU) quelle que soit l’écriture.
-• Maintient le calcul « C.A en € ».
+• Maintient le calcul « C.A en € ».Fdate
 • Réordonne les colonnes métier.
 """
 from __future__ import annotations
@@ -161,6 +161,8 @@ def main():
     parser.add_argument("--chemin_sortie", required=True)
     parser.add_argument("--taux_manuels",  help="USD=0.93,GBP=1.15", default=None)
     parser.add_argument("--date",          help="YYYY-MM-DD pour historique (premium)", default=None)
+    parser.add_argument("--date_debut", help="Date début de la période à filtrer (YYYY-MM-DD)", default=None)
+    parser.add_argument("--date_fin",   help="Date fin de la période à filtrer (YYYY-MM-DD)", default=None)
     args = parser.parse_args()
     devises_detectées: set[str] = set()
 
@@ -232,6 +234,15 @@ def main():
 
                 df["NOMFICHIER"] = os.path.basename(path)
                 df["FEUILLE"]     = sh
+                # Conversion explicite de la première colonne (MONTH) en datetime si possible
+                if "MONTH" in df.columns:
+                    try:
+                        df["MONTH"] = pd.to_datetime(df["MONTH"], errors="coerce")
+                        nb_dates = df["MONTH"].notna().sum()
+                        print(f"       📅 Dates valides détectées dans 'MONTH' : {nb_dates}", flush=True)
+                    except Exception as e:
+                        print(f"       ⚠ Erreur conversion 'MONTH' en date : {e}", flush=True)
+
                 all_dfs.append(df)
 
         except Exception as e:
@@ -251,6 +262,39 @@ def main():
     rates.update(manu)
 
     fusion = pd.concat(all_dfs, ignore_index=True)
+
+    # 🔍 Extraire les dates uniques de la colonne "MONTH"
+    if "MONTH" in fusion.columns:
+        try:
+            fusion["MONTH"] = pd.to_datetime(fusion["MONTH"], errors="coerce")
+            dates_disponibles = sorted(fusion["MONTH"].dropna().dt.strftime("%Y-%m-%d").unique())
+        except Exception as e:
+            print(f"[ERROR] Impossible de convertir les dates : {e}")
+            dates_disponibles = []
+    else:
+        print("[WARN] ❌ Aucune colonne 'MONTH' trouvée.")
+        dates_disponibles = []
+
+    # 📋 Afficher les dates disponibles pour que l'utilisateur les choisisse
+    if dates_disponibles:
+        print(f"\n🗓️ Dates détectées dans les fichiers :\n" + "\n".join(f"  • {d}" for d in dates_disponibles))
+
+        if args.date_debut and args.date_fin:
+            print(f"\n✅ Filtrage automatique entre {args.date_debut} et {args.date_fin}")
+            dates_choisies = [d for d in dates_disponibles if args.date_debut <= d <= args.date_fin]
+            print(f"\n🎯 Dates retenues : {dates_choisies}\n")
+        else:
+            print("\n⏳ Entrez les dates à inclure séparées par une virgule (ex: 2025-01-01,2025-01-15) :")
+            user_input = input(">>> ").strip()
+            dates_choisies = [d.strip() for d in user_input.split(",") if d.strip() in dates_disponibles]
+            print(f"\n✅ Dates retenues : {dates_choisies}\n")
+
+
+        # 🎯 Filtrer le DataFrame pour ne garder que les lignes avec les dates sélectionnées
+        fusion = fusion[fusion["MONTH"].dt.strftime("%Y-%m-%d").isin(dates_choisies)]
+    else:
+        print("[WARN] ❌ Aucune date valide détectée, aucun filtre appliqué.")
+
 
     fusion["CURRENCY"] = fusion["CURRENCY"].str.strip().str.upper()
     fusion["Taux €"] = fusion["CURRENCY"].map(rates)
