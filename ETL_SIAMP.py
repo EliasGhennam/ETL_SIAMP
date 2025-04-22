@@ -306,6 +306,22 @@ def main():
         axis=1
     )
 
+    # ➕ Calcul des marges
+    fusion["VAR Margin"] = fusion.apply(
+        lambda row: row["C.A en €"] - (row["VARIABLE COSTS"] * row["Taux €"] * row["QUANTITY"])
+        if pd.notnull(row.get("C.A en €")) and pd.notnull(row.get("VARIABLE COSTS")) and pd.notnull(row.get("Taux €")) and pd.notnull(row.get("QUANTITY"))
+        else None,
+        axis=1
+    )
+
+    fusion["Margin"] = fusion.apply(
+        lambda row: row["C.A en €"] - (row["COGS"] * row["Taux €"] * row["QUANTITY"])
+        if pd.notnull(row.get("C.A en €")) and pd.notnull(row.get("COGS")) and pd.notnull(row.get("Taux €")) and pd.notnull(row.get("QUANTITY"))
+        else None,
+        axis=1
+    )
+
+
 
     dev_non_gérées = devises_detectées - rates.keys()
 
@@ -318,14 +334,14 @@ def main():
         print(f"[INFO] 🎉 Tous les taux de devises sont disponibles 🎯", flush=True)
 
 
-    
-
     ORDER = [
-        "MONTH","SIAMP UNIT","SALE TYPE","TYPE OF CANAL","ENSEIGNE","CUSTOMER NAME",
-        "COMMERCIAL AREA","SUR FAMILLE","FAMILLE","REFERENCE","PRODUCT NAME",
-        "QUANTITY","TURNOVER","CURRENCY","COUNTRY","C.A en €",
-        "VARIABLE COSTS","COGS","NOMFICHIER","FEUILLE"
+    "MONTH","SIAMP UNIT","SALE TYPE","TYPE OF CANAL","ENSEIGNE","CUSTOMER NAME",
+    "COMMERCIAL AREA","SUR FAMILLE","FAMILLE","REFERENCE","PRODUCT NAME",
+    "QUANTITY","TURNOVER","CURRENCY","COUNTRY","C.A en €",
+    "VARIABLE COSTS","COGS", "VAR Margin", "Margin",
+    "NOMFICHIER","FEUILLE"
     ]
+
     fusion = fusion[[c for c in ORDER if c in fusion.columns]
                     + [c for c in fusion.columns if c not in ORDER]]
 
@@ -340,7 +356,7 @@ def main():
         tableStyleInfo=TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
     ))
     for col in ws.iter_cols(min_row=2, max_col=ws.max_column):
-        if ws[f"{col[0].column_letter}1"].value == "C.A en €":
+        if ws[f"{col[0].column_letter}1"].value == {"C.A en €", "VAR Margin", "Margin"}:
             for cell in col:
                 cell.number_format = u"#,##0.00\u00a0€"
     wb.save(out)
