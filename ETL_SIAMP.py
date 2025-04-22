@@ -163,6 +163,8 @@ def main():
     parser.add_argument("--date",          help="YYYY-MM-DD pour historique (premium)", default=None)
     parser.add_argument("--date_debut", help="Date début de la période à filtrer (YYYY-MM-DD)", default=None)
     parser.add_argument("--date_fin",   help="Date fin de la période à filtrer (YYYY-MM-DD)", default=None)
+    parser.add_argument("--mois_selectionnes", help="Liste des mois à traiter, séparés par des virgules (ex: 2025-02,2025-03)", default=None)
+
     args = parser.parse_args()
     devises_detectées: set[str] = set()
 
@@ -278,20 +280,18 @@ def main():
     # 📋 Afficher les dates disponibles pour que l'utilisateur les choisisse
     if dates_disponibles:
         print(f"\n🗓️ Dates détectées dans les fichiers :\n" + "\n".join(f"  • {d}" for d in dates_disponibles))
-
-        if args.date_debut and args.date_fin:
-            print(f"\n✅ Filtrage automatique entre {args.date_debut} et {args.date_fin}")
-            dates_choisies = [d for d in dates_disponibles if args.date_debut <= d <= args.date_fin]
-            print(f"\n🎯 Dates retenues : {dates_choisies}\n")
+        
+        if args.mois_selectionnes:
+            mois_choisis = args.mois_selectionnes.split(",")
+            print(f"\n✅ Mois choisis via l'interface : {mois_choisis}")
+            # 🎯 On ne garde que les lignes dont le "MONTH" correspond à un des mois choisis (YYYY-MM)
+            fusion = fusion[fusion["MONTH"].dt.to_period("M").astype(str).isin(mois_choisis)]
         else:
             print("\n⏳ Entrez les dates à inclure séparées par une virgule (ex: 2025-01-01,2025-01-15) :")
             user_input = input(">>> ").strip()
             dates_choisies = [d.strip() for d in user_input.split(",") if d.strip() in dates_disponibles]
             print(f"\n✅ Dates retenues : {dates_choisies}\n")
-
-
-        # 🎯 Filtrer le DataFrame pour ne garder que les lignes avec les dates sélectionnées
-        fusion = fusion[fusion["MONTH"].dt.strftime("%Y-%m-%d").isin(dates_choisies)]
+            fusion = fusion[fusion["MONTH"].dt.strftime("%Y-%m-%d").isin(dates_choisies)]
     else:
         print("[WARN] ❌ Aucune date valide détectée, aucun filtre appliqué.")
 
