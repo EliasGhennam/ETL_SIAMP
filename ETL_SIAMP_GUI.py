@@ -13,7 +13,9 @@ import os
 import sys
 import re
 import pandas as pd
-import openpyxl
+from openpyxl import load_workbook
+from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl.utils import get_column_letter
 import subprocess
 import shutil
 import calendar
@@ -286,8 +288,69 @@ class MainWindow(QMainWindow):
             self.txt_historique_out.setText(path)
 
     def _run_historique_fusion(self):
-            # On remplira cette méthode plus tard (fusion réelle)
-            QMessageBox.information(self, "Info", "Fusion historique : à implémenter 🛠️.")
+        files = self.lst_historique_files.files()
+        if not files:
+            return QMessageBox.warning(self, "Erreur", "Ajoutez au moins un fichier Excel à fusionner.")
+
+        out = self.txt_historique_out.text().strip()
+        if not out:
+            return QMessageBox.warning(self, "Erreur", "Spécifiez le fichier de sortie.")
+
+        try:
+            self.txt_log_historique.clear()
+            self.pbar_historique.setValue(0)
+            all_dfs = []
+
+            total = len(files)
+            for idx, path in enumerate(files, 1):
+                self.txt_log_historique.appendPlainText(f"[{idx}/{total}] Lecture : {os.path.basename(path)}")
+                df = pd.read_excel(path, engine="openpyxl")
+                all_dfs.append(df)
+                self.pbar_historique.setValue(int((idx / total) * 100))
+            
+            if not all_dfs:
+                self.txt_log_historique.appendPlainText("❌ Aucun fichier valide à fusionner.")
+                return
+
+            fusion = pd.concat(all_dfs, ignore_index=True)
+
+            # Réordonner les colonnes comme dans l’ETL
+            ORDER = [
+                "MONTH", "SIAMP UNIT", "SALE TYPE", "TYPE OF CANAL", "ENSEIGNE", "CUSTOMER NAME",
+                "COMMERCIAL AREA", "SUR FAMILLE", "FAMILLE", "REFERENCE", "PRODUCT NAME",
+                "QUANTITY", "TURNOVER", "CURRENCY", "COUNTRY", "C.A en €",
+                "VARIABLE COSTS", "COGS", "VAR Margin", "Margin", "NOMFICHIER", "FEUILLE"
+            ]
+            fusion = fusion[[c for c in ORDER if c in fusion.columns] +
+                            [c for c in fusion.columns if c not in ORDER]]
+
+            fusion.to_excel(out, index=False)
+
+            # ➡️ ➕ Ajouter la mise en forme tableau avec filtres
+            wb = load_workbook(out)
+            ws = wb.active
+
+            last_col_letter = get_column_letter(ws.max_column)
+            last_row = ws.max_row
+            table_range = f"A1:{last_col_letter}{last_row}"
+            table = Table(displayName="HistoriqueTable", ref=table_range)
+            table.tableStyleInfo = TableStyleInfo(
+                name="TableStyleMedium9",
+                showFirstColumn=False,
+                showLastColumn=False,
+                showRowStripes=True,
+                showColumnStripes=False
+            )
+            ws.add_table(table)
+            wb.save(out)
+
+            self.txt_log_historique.appendPlainText(f"✅ Fusion terminée avec filtres activés. Fichier créé : {out}")
+            self.pbar_historique.setValue(100)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Erreur durant la fusion : {e}")
+            self.txt_log_historique.appendPlainText(f"[ERROR] {e}")
+            self.pbar_historique.setValue(0)
 
     # ---------- UI construction ----------
     def _build_traitement_ui(self, parent_widget):
