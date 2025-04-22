@@ -122,7 +122,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ETL SIAMP — Fusion Excel")
         self.setWindowIcon(QIcon(ICON_PATH))
         self.resize(760, 640)
-        self._build_ui()
+        self._build_tabs()
         self._apply_style()
 
     def _detect_months(self):
@@ -182,7 +182,7 @@ class MainWindow(QMainWindow):
                 child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 child.setCheckState(0, Qt.CheckState.Checked)
                 # ➡️ Important : stocker la vraie valeur numérique (ex. : "02") dans les "data"
-                child.setData(0, Qt.ItemDataRole.UserRole, mois)
+                child.setData(0, Qt.ItemDataRole.UserRole, f"{int(mois):02d}")
                 parent.addChild(child)
             tree.addTopLevelItem(parent)
 
@@ -208,11 +208,90 @@ class MainWindow(QMainWindow):
         self.mois_selectionnes = dates_choisies  # Stocke la sélection pour l'utiliser dans _run_etl
         self.txt_log.appendPlainText(f"✅ Mois choisis : {self.mois_selectionnes}")
 
+    def _build_tabs(self):
+        from PyQt6.QtWidgets import QTabWidget
+
+        self.tabs = QTabWidget()
+
+        # Onglet 1 : Traitement mensuel (ce que tu avais déjà)
+        self.page_traitement = QWidget()
+        self.tabs.addTab(self.page_traitement, "Traitement Mensuel")
+        self._build_traitement_ui(self.page_traitement)  # ⚠️ on utilise maintenant page_traitement ici
+
+        # Onglet 2 : Fusion historique (nouvel onglet)
+        self.page_historique = QWidget()
+        self.tabs.addTab(self.page_historique, "Fusion Historique")
+        self._build_historique_ui(self.page_historique)  # ⚠️ méthode à créer juste après
+        self.setCentralWidget(self.tabs)
+
+    def _build_historique_ui(self, parent_widget):
+        layout = QVBoxLayout(parent_widget)
+
+        # Fichiers historiques
+        layout.addWidget(QLabel("Fichiers historiques à fusionner :"))
+        self.lst_historique_files = DropListWidget(on_click_callback=self._add_historique_files)
+        layout.addWidget(self.lst_historique_files)
+
+        btn_bar = QHBoxLayout()
+        btn_add = QPushButton("Ajouter…")
+        btn_add.clicked.connect(self._add_historique_files)
+        btn_bar.addWidget(btn_add)
+        btn_rem = QPushButton("Retirer sélection")
+        btn_rem.clicked.connect(self._remove_historique_files)
+        btn_bar.addWidget(btn_rem)
+        btn_bar.addStretch()
+        layout.addLayout(btn_bar)
+        self.lst_historique_files.setAlternatingRowColors(True)
+
+        # Chemin de sortie
+        row_out = QHBoxLayout()
+        row_out.addWidget(QLabel("Fichier de sortie :"))
+        self.txt_historique_out = QLineEdit("Historique_Consolide.xlsx")
+        btn_out = QPushButton("Parcourir…")
+        btn_out.clicked.connect(self._choose_historique_output)
+        row_out.addWidget(self.txt_historique_out)
+        row_out.addWidget(btn_out)
+        layout.addLayout(row_out)
+
+        # Barre de progression + bouton lancer
+        self.pbar_historique = QProgressBar()
+        self.pbar_historique.setMaximum(100)
+        self.pbar_historique.setValue(0)
+        layout.addWidget(self.pbar_historique)
+
+        btn_run = QPushButton("▶ Fusionner l’historique")
+        btn_run.setMinimumHeight(38)
+        btn_run.clicked.connect(self._run_historique_fusion)
+        layout.addWidget(btn_run)
+
+        # Console historique
+        self.txt_log_historique = QPlainTextEdit()
+        self.txt_log_historique.setReadOnly(True)
+        self.txt_log_historique.setMaximumBlockCount(1000)
+        layout.addWidget(self.txt_log_historique, stretch=2)
+
+    def _add_historique_files(self):
+        files, _ = QFileDialog.getOpenFileNames(self, "Sélectionner fichiers historiques", "", "Excel (*.xlsx)")
+        for f in files:
+            if f not in self.lst_historique_files.files():
+                self.lst_historique_files.addItem(f)
+
+    def _remove_historique_files(self):
+        for item in self.lst_historique_files.selectedItems():
+            self.lst_historique_files.takeItem(self.lst_historique_files.row(item))
+
+    def _choose_historique_output(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Fichier de sortie historique", self.txt_historique_out.text(), "Excel (*.xlsx)")
+        if path:
+            self.txt_historique_out.setText(path)
+
+    def _run_historique_fusion(self):
+            # On remplira cette méthode plus tard (fusion réelle)
+            QMessageBox.information(self, "Info", "Fusion historique : à implémenter 🛠️.")
+
     # ---------- UI construction ----------
-    def _build_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
+    def _build_traitement_ui(self, parent_widget):
+        layout = QVBoxLayout(parent_widget)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
 
@@ -291,6 +370,7 @@ class MainWindow(QMainWindow):
         self.txt_log.setReadOnly(True)
         self.txt_log.setMaximumBlockCount(1000)
         layout.addWidget(self.txt_log, stretch=2)
+
 
     # ---------- style ----------
     def _apply_style(self):
