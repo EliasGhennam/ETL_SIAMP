@@ -13,6 +13,7 @@ import os
 import sys
 import re
 import pandas as pd
+import configparser
 from openpyxl import load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
@@ -35,6 +36,7 @@ SCRIPT_CORE = "ETL_SIAMP.py"
 ICON_PATH   = "siamp_icon.ico"
 CONFIG_FILE = "siamp_api_key.cfg"
 DEFAULT_API = "tgogyMcj5vxTz5XDw9WDA90gYIueAV99IbgH"
+CONFIG_REF_FILE = "ref_files.cfg"
 
 
 # ---------------------------------------------------------------- worker QThread
@@ -226,6 +228,11 @@ class MainWindow(QMainWindow):
         self._build_historique_ui(self.page_historique)  # ⚠️ méthode à créer juste après
         self.setCentralWidget(self.tabs)
 
+        # Onglet 3 : Paramètres (NOUVEAU)
+        self.page_parametres = QWidget()
+        self.tabs.addTab(self.page_parametres, "Paramètres / Références")
+        self._build_parametres_ui(self.page_parametres)  # 👈 à créer juste après
+
     def _build_historique_ui(self, parent_widget):
         layout = QVBoxLayout(parent_widget)
 
@@ -296,7 +303,7 @@ class MainWindow(QMainWindow):
         if not out:
             return QMessageBox.warning(self, "Erreur", "Spécifiez le fichier de sortie.")
 
-        try:
+        try: #Ce try la semble poser problème
             self.txt_log_historique.clear()
             self.pbar_historique.setValue(0)
             all_dfs = []
@@ -341,16 +348,39 @@ class MainWindow(QMainWindow):
                 showRowStripes=True,
                 showColumnStripes=False
             )
-            ws.add_table(table)
-            wb.save(out)
 
+            # 🔒 Sécuriser la suppression de la table existante si elle existe (compatible avec OpenPyXL ≥ 3.0)
+            try:
+                existing_tables = ws.tables  # ✅ Utilise le bon attribut actuel
+                if isinstance(existing_tables, dict):
+                    table_names = list(existing_tables.keys())
+                    if "HistoriqueTable" in table_names:
+                        del existing_tables["HistoriqueTable"]
+                        self.txt_log_historique.appendPlainText("[INFO] 🗑️ Ancienne table 'HistoriqueTable' supprimée (dict)")
+                else:
+                    self.txt_log_historique.appendPlainText("[WARN] ❓ Type inattendu pour ws.tables : non dict")
+            except Exception as e:
+                self.txt_log_historique.appendPlainText(f"[ERROR] ❌ Erreur pendant la suppression de l’ancienne table : {e}")
+                import traceback
+                traceback.print_exc()
+
+            # ➕ Ajouter la nouvelle table proprement
+            try:
+                ws.add_table(table)
+                self.txt_log_historique.appendPlainText("[INFO] ✅ Nouvelle table 'HistoriqueTable' ajoutée avec succès.")
+            except Exception as e:
+                self.txt_log_historique.appendPlainText(f"[ERROR] ❌ Impossible d’ajouter la table : {e}")
+                import traceback
+                traceback.print_exc()
+
+
+            wb.save(out)
             self.txt_log_historique.appendPlainText(f"✅ Fusion terminée avec filtres activés. Fichier créé : {out}")
             self.pbar_historique.setValue(100)
-
         except Exception as e:
-            QMessageBox.critical(self, "Erreur", f"Erreur durant la fusion : {e}")
-            self.txt_log_historique.appendPlainText(f"[ERROR] {e}")
-            self.pbar_historique.setValue(0)
+            self.txt_log_historique.appendPlainText(f"[ERROR] ❌ Une erreur est survenue pendant la fusion : {e}")
+            import traceback
+            traceback.print_exc()
 
     # ---------- UI construction ----------
     def _build_traitement_ui(self, parent_widget):
@@ -599,6 +629,98 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur lors de la récupération ECB :\n{e}")
+
+
+    def _build_parametres_ui(self, parent_widget):
+        layout = QVBoxLayout(parent_widget)
+
+        layout.addWidget(QLabel("Sélection des fichiers de référence :"))
+
+        # Fichier ZONE AFFECTATION
+        row_zone = QHBoxLayout()
+        row_zone.addWidget(QLabel("ZONE AFFECTATION :"))
+        self.txt_zone_affectation = QLineEdit()
+        btn_zone = QPushButton("Parcourir…")
+        btn_zone.clicked.connect(self._choose_zone_affectation)
+        row_zone.addWidget(self.txt_zone_affectation)
+        row_zone.addWidget(btn_zone)
+        layout.addLayout(row_zone)
+
+        # Fichier table
+        row_table = QHBoxLayout()
+        row_table.addWidget(QLabel("table :"))
+        self.txt_table_file = QLineEdit()
+        btn_table = QPushButton("Parcourir…")
+        btn_table.clicked.connect(self._choose_table_file)
+        row_table.addWidget(self.txt_table_file)
+        row_table.addWidget(btn_table)
+        layout.addLayout(row_table)
+
+        # Bouton Sauvegarder
+        btn_save = QPushButton("💾 Sauvegarder les chemins")
+        btn_save.clicked.connect(self._save_reference_paths)
+        layout.addWidget(btn_save)
+
+        # Charger si config existe
+        self._load_reference_paths()
+
+    def _save_reference_paths(self):
+        config = configparser.ConfigParser()
+        config['REFERENCES'] = {
+            'zone_affectation': self.txt_zone_affectation.text(),
+            'table': self.txt_table_file.text()
+        }
+        with open(CONFIG_REF_FILE, 'w') as cfgfile:
+            config.write(cfgfile)
+        QMessageBox.information(self, "Succès", "Les chemins des fichiers de référence ont été sauvegardés.")
+        self._load_reference_paths()  # Recharge directement après sauvegarde
+
+    def _load_reference_paths(self):
+        if os.path.exists(CONFIG_REF_FILE):
+            config = configparser.ConfigParser()
+            config.read(CONFIG_REF_FILE)
+            refs = config['REFERENCES']
+            self.txt_zone_affectation.setText(refs.get('zone_affectation', ''))
+            self.txt_table_file.setText(refs.get('table', ''))
+
+            # ✅ Check si les fichiers existent physiquement
+            zone_ok = os.path.exists(self.txt_zone_affectation.text())
+            table_ok = os.path.exists(self.txt_table_file.text())
+
+            if not zone_ok or not table_ok:
+                msg = "⚠️ Fichiers de référence manquants ou invalides :\n"
+                if not zone_ok:
+                    msg += f" - ZONE AFFECTATION : {self.txt_zone_affectation.text()}\n"
+                if not table_ok:
+                    msg += f" - table : {self.txt_table_file.text()}\n"
+                QMessageBox.warning(self, "Attention", msg)
+                
+    def _choose_zone_affectation(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Choisir ZONE AFFECTATION", "", "Excel (*.xlsx)")
+        if path:
+            try:
+                xls = pd.ExcelFile(path, engine="openpyxl")
+                if "ZONE AFFECTATION" in xls.sheet_names:
+                    self.txt_zone_affectation.setText(path)
+                    QMessageBox.information(self, "✅ Succès", f"Fichier validé : Feuille 'ZONE AFFECTATION' détectée.")
+                else:
+                    QMessageBox.warning(self, "Erreur", f"Aucune feuille 'ZONE AFFECTATION' trouvée dans ce fichier.")
+            except Exception as e:
+                QMessageBox.critical(self, "Erreur", f"Impossible d'ouvrir le fichier :\n{e}")
+
+
+    def _choose_table_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Choisir table", "", "Excel (*.xlsx)")
+        if path:
+            try:
+                xls = pd.ExcelFile(path, engine="openpyxl")
+                if "table" in xls.sheet_names:
+                    self.txt_table_file.setText(path)
+                    QMessageBox.information(self, "✅ Succès", f"Fichier validé : Feuille 'table' détectée.")
+                else:
+                    QMessageBox.warning(self, "Erreur", f"Aucune feuille 'table' trouvée dans ce fichier.")
+            except Exception as e:
+                QMessageBox.critical(self, "Erreur", f"Impossible d'ouvrir le fichier :\n{e}")
 
 
 
