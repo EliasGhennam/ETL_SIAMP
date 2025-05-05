@@ -1,0 +1,2 @@
+C:\Users\elias\OneDrive\Documents\PROFESSIONNEL\SIAMP\SUJETS\SUJET - 1 (Gestion C.A filiales)\Dev\ETL_SIAMP.py:350: FutureWarning: DataFrame.applymap has been deprecated. Use DataFrame.map instead.
+  return df.applymap(
