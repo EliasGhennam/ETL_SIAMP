@@ -331,25 +331,34 @@ def main():
 
     # ---------------------------- SUR FAMILLE ----------------------------
     try:
+        # Nettoyage préalable
         fusion["REFERENCE"] = fusion["REFERENCE"].astype(str).str.strip()
         table_df.iloc[:, 14] = table_df.iloc[:, 14].astype(str).str.strip()  # colonne O
+
+        # Fusion sans écraser l’existante
         fusion = fusion.merge(
             table_df[[table_df.columns[14], table_df.columns[16]]].rename(columns={
                 table_df.columns[14]: "REFERENCE",
-                table_df.columns[16]: "SUR FAMILLE"
+                table_df.columns[16]: "Sur-famille"  # ⚠️ Respectez bien la casse
             }),
             how="left",
             on="REFERENCE"
         )
-        if "SUR FAMILLE_x" in fusion.columns and "SUR FAMILLE_y" in fusion.columns:
-            fusion.drop(columns=["SUR FAMILLE_x"], inplace=True)
-            fusion.rename(columns={"SUR FAMILLE_y": "SUR FAMILLE"}, inplace=True)
-        elif "SUR FAMILLE_y" in fusion.columns:
-            fusion.rename(columns={"SUR FAMILLE_y": "SUR FAMILLE"}, inplace=True)
-        print(f"[INFO] ✅ Fusion SUR FAMILLE effectuée.")
+
+        print("[INFO] ✅ Colonne 'Sur famille' fusionnée et 'SUR FAMILLE' consolidée.")
+        def nettoyer_cellules(df):
+            return df.applymap(
+                lambda x: (
+                    re.sub(r'[^\x09\x0A\x0D\x20-\x7E\u00A0-\uFFFF]', '', str(x))
+                    if isinstance(x, str) else x
+                )
+            )
+        fusion = nettoyer_cellules(fusion)
+
     except Exception as e:
         print(f"[ERROR] ❌ Erreur fusion SUR FAMILLE : {e}")
         traceback.print_exc()
+
 
     # ---------------------------- ENSEIGNE RET ----------------------------
     try:
@@ -457,7 +466,7 @@ def main():
     "COMMERCIAL AREA", "SUR FAMILLE", "FAMILLE", "REFERENCE", "PRODUCT NAME",
     "QUANTITY", "TURNOVER", "CURRENCY", "COUNTRY", "C.A en €",
     "VARIABLE COSTS", "COGS", "VAR Margin", "Margin",
-    "NOMFICHIER", "FEUILLE", "Enseigne ret"
+    "NOMFICHIER", "FEUILLE", "Enseigne ret", "Sur famille"
 ]
 
 
@@ -467,7 +476,6 @@ def main():
 
     fusion = fusion[[c for c in ORDER if c in fusion.columns]
                     + [c for c in fusion.columns if c not in ORDER]]
-
     fusion.to_excel(out, index=False)
     print(f"[DEBUG] 📄 Fichier Excel sauvegardé : {out}", flush=True)
     print(f"[DEBUG] 📏 Shape du DataFrame fusionné : {fusion.shape}", flush=True)
@@ -495,44 +503,14 @@ def main():
                 showRowStripes=True,
                 showColumnStripes=False
             )
+            
+            # ─── Videz d’abord toute table existante ───────────────────────
+            ws._tables.clear()
 
-            # ➖ Sécuriser la suppression et l’ajout de la table
-            print(f"[DEBUG] Type de ws._tables : {type(ws._tables)}", flush=True)
-            print(f"[DEBUG] Contenu de ws._tables : {ws._tables}", flush=True)
+            # ─── Ajout de la nouvelle table ───────────────────────────────
+            ws.add_table(table)
+            print("[DEBUG] ✅ Nouvelle table 'FusionTable' ajoutée avec succès", flush=True)
 
-            try:
-                if hasattr(ws, "_tables"):
-                    if isinstance(ws._tables, dict):
-                        table_names = list(ws._tables.keys())
-                        print(f"[DEBUG] 🗑️ Tables existantes (dict) : {table_names}", flush=True)
-                        if "FusionTable" in table_names:
-                            del ws._tables["FusionTable"]
-                            print("[INFO] 🗑️ Ancienne table 'FusionTable' supprimée (dict)", flush=True)
-                    elif isinstance(ws._tables, (list, tuple)):
-                        table_names = [tbl.name for tbl in ws._tables]
-                        print(f"[DEBUG] 🗑️ Tables existantes (list/tuple) : {table_names}", flush=True)
-                        ws._tables = [tbl for tbl in ws._tables if tbl.name != "FusionTable"]
-                        print("[INFO] 🗑️ Ancienne table 'FusionTable' supprimée (list/tuple)", flush=True)
-                    else:
-                        print("[WARN] ❓ Type inattendu pour ws._tables", flush=True)
-            except Exception as e:
-                print(f"[ERROR] ❌ Problème pendant la suppression de la table existante : {e}", flush=True)
-                traceback.print_exc()
-                sys.exit(1)
-
-            print("[DEBUG] ✅ Suppression des anciennes tables terminée. Tentative d’ajout de la nouvelle table...", flush=True)
-
-            try:
-                print(f"[DEBUG] 📏 Table range calculé : {table_range}", flush=True)
-                assert last_row > 1, "[ASSERTION FAILED] ❌ last_row <= 1 : pas assez de lignes"
-                assert ws.max_column > 0, "[ASSERTION FAILED] ❌ max_column == 0 : aucune colonne détectée"
-
-                ws.add_table(table)
-                print("[DEBUG] ✅ Nouvelle table 'FusionTable' ajoutée avec succès", flush=True)
-            except Exception as e:
-                print(f"[ERROR] ❌ Échec de ws.add_table() : {e}", flush=True)
-                traceback.print_exc()
-                sys.exit(1)
 
             # ➕ Formatage des colonnes €
             EURO_COLUMNS = {"C.A en €", "VAR Margin", "Margin"}

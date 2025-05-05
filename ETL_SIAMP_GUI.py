@@ -349,29 +349,9 @@ class MainWindow(QMainWindow):
                 showColumnStripes=False
             )
 
-            # 🔒 Sécuriser la suppression de la table existante si elle existe (compatible avec OpenPyXL ≥ 3.0)
-            try:
-                existing_tables = ws.tables  # ✅ Utilise le bon attribut actuel
-                if isinstance(existing_tables, dict):
-                    table_names = list(existing_tables.keys())
-                    if "HistoriqueTable" in table_names:
-                        del existing_tables["HistoriqueTable"]
-                        self.txt_log_historique.appendPlainText("[INFO] 🗑️ Ancienne table 'HistoriqueTable' supprimée (dict)")
-                else:
-                    self.txt_log_historique.appendPlainText("[WARN] ❓ Type inattendu pour ws.tables : non dict")
-            except Exception as e:
-                self.txt_log_historique.appendPlainText(f"[ERROR] ❌ Erreur pendant la suppression de l’ancienne table : {e}")
-                import traceback
-                traceback.print_exc()
-
-            # ➕ Ajouter la nouvelle table proprement
-            try:
-                ws.add_table(table)
-                self.txt_log_historique.appendPlainText("[INFO] ✅ Nouvelle table 'HistoriqueTable' ajoutée avec succès.")
-            except Exception as e:
-                self.txt_log_historique.appendPlainText(f"[ERROR] ❌ Impossible d’ajouter la table : {e}")
-                import traceback
-                traceback.print_exc()
+            # Supprime toute table existante et ajoute la nouvelle
+            ws._tables.clear()
+            ws.add_table(table)
 
 
             wb.save(out)
