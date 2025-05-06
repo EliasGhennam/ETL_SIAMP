@@ -11,6 +11,14 @@ ETL_SIAMP_GUI.py – Interface PyQt6 améliorée
 from __future__ import annotations
 import os
 import sys
+
+def resource_path(relative_path: str) -> str:
+    """Retourne le chemin absolu d'un fichier de ressources, compatible avec Nuitka (standalone ou non)."""
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, relative_path)  # exécutable Nuitka
+    return os.path.join(os.path.abspath("."), relative_path)  # mode normal
+
+
 import re
 import pandas as pd
 import configparser
@@ -33,10 +41,9 @@ from PyQt6.QtWidgets import (
 )
 
 SCRIPT_CORE = "ETL_SIAMP.py"
-ICON_PATH   = "siamp_icon.ico"
-CONFIG_FILE = "siamp_api_key.cfg"
-***REMOVED***
-CONFIG_REF_FILE = "ref_files.cfg"
+ICON_PATH        = resource_path("mydata/siamp_icon.ico")
+CONFIG_FILE      = resource_path("mydata/siamp_api_key.cfg")
+CONFIG_REF_FILE  = resource_path("mydata/ref_files.cfg")
 
 
 # ---------------------------------------------------------------- worker QThread
