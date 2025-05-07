@@ -1,0 +1,25 @@
+1 VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+FILEOS 0x40004
+FILETYPE 0x1
+{
+  BLOCK "StringFileInfo"
+  {
+    BLOCK "040904B0"
+    {
+      VALUE "CompanyName", "SIAMP"
+      VALUE "FileDescription", "ETL SIAMP - Fusion Excel"
+      VALUE "FileVersion", "1.0.0"
+      VALUE "InternalName", "ETL_SIAMP_GUI"
+      VALUE "LegalCopyright", "© 2025 Elias Ghennam / SIAMP"
+      VALUE "OriginalFilename", "ETL_SIAMP_GUI.exe"
+      VALUE "ProductName", "ETL SIAMP"
+      VALUE "ProductVersion", "1.0.0"
+    }
+  }
+  BLOCK "VarFileInfo"
+  {
+    VALUE "Translation", 0x0409, 1200
+  }
+}
