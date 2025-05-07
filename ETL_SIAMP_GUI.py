@@ -9,7 +9,6 @@ ETL_SIAMP_GUI.py – Interface PyQt6 améliorée
 • Exécute le script core `ETL_SIAMP.py` via subprocess.
 """
 from __future__ import annotations
-import os
 import sys
 
 def resource_path(relative_path: str) -> str:
@@ -25,13 +24,13 @@ import configparser
 from openpyxl import load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
-import subprocess
 import shutil
 import calendar
 from typing import List
 import xml.etree.ElementTree as ET
 from datetime import datetime
 import requests
+from ETL_SIAMP import main as etl_main
 from PyQt6.QtCore   import Qt, QThread, pyqtSignal, QDate
 from PyQt6.QtGui    import QIcon, QAction, QKeySequence, QPainter, QFont, QColor
 from PyQt6.QtWidgets import (
@@ -39,8 +38,10 @@ from PyQt6.QtWidgets import (
     QLineEdit, QPushButton, QFileDialog, QMessageBox, QListWidget, QComboBox,
     QPlainTextEdit, QProgressBar, QDateEdit, QInputDialog
 )
+import os
+os.environ["QT_QPA_PLATFORM"] = "windows:darkmode=2"
 
-SCRIPT_CORE = "ETL_SIAMP.py"
+
 ICON_PATH        = resource_path("mydata/siamp_icon.ico")
 CONFIG_FILE      = resource_path("mydata/siamp_api_key.cfg")
 CONFIG_REF_FILE  = resource_path("mydata/ref_files.cfg")
@@ -52,32 +53,50 @@ class Worker(QThread):
     progress = pyqtSignal(int)
     done     = pyqtSignal(bool)
 
-    def __init__(self, cmd: list[str], env: dict[str,str]):
+    def __init__(self, args: list[str]):
         super().__init__()
-        self.cmd = cmd
-        self.env = env
+        self.args = args
 
     def run(self):
-        with open("error_log.txt", "w", encoding="utf-8", errors="replace") as err_file:
-            proc = subprocess.Popen(
-                self.cmd,
-                stdout=subprocess.PIPE,
-                stderr=err_file,
-                text=True,
-                env=self.env,
-                encoding='utf-8',
-                errors='replace'
-            )
-            for line in proc.stdout:
-                line = line.rstrip()
-                self.log.emit(line)
-                if line.startswith("PROGRESS:"):
-                    try:
-                        pct = int(line.split(":")[1].strip().strip("% "))
-                        self.progress.emit(pct)
-                    except ValueError:
-                        pass
-            self.done.emit(proc.wait() == 0)
+        import io
+        import builtins
+        from contextlib import redirect_stdout
+
+        class StreamInterceptor(io.TextIOBase):
+            def __init__(self, log_signal, progress_signal):
+                super().__init__()
+                self._buffer = ""
+                self.log = log_signal
+                self.progress = progress_signal
+
+            def write(self, txt):
+                self._buffer += txt
+                while "\n" in self._buffer:
+                    line, self._buffer = self._buffer.split("\n", 1)
+                    line = line.strip()
+                    if line:
+                        if line.startswith("PROGRESS:"):
+                            try:
+                                pct = int(line.split(":")[1].strip().strip("% "))
+                                self.progress.emit(pct)
+                            except ValueError:
+                                pass
+                        self.log.emit(line)
+
+            def flush(self):
+                pass
+
+
+        sys.argv = ["ETL_SIAMP.py"] + self.args
+        stream = StreamInterceptor(self.log, self.progress)
+        try:
+            with redirect_stdout(stream):
+                from ETL_SIAMP import main as etl_main
+                etl_main()
+            self.done.emit(True)
+        except Exception as e:
+            self.log.emit(f"[ERREUR] {e}")
+            self.done.emit(False)
 
 
 # ---------------------------------------------------------------- DropListWidget
@@ -455,16 +474,83 @@ class MainWindow(QMainWindow):
     # ---------- style ----------
     def _apply_style(self):
         self.setStyleSheet("""
-            QWidget { font-family: 'Segoe UI', sans-serif; font-size: 10pt; color: #E0E0E0; }
-            QMainWindow { background-color: #22252A; }
-            QLabel { font-weight: 500; }
-            QLineEdit, QListWidget, QComboBox, QPlainTextEdit { 
-                background-color: #2D3036; border: 1px solid #444; padding: 4px; border-radius: 4px; 
+                           
+            QTabBar::tab {
+                background: #3a3a3a;  /* fond de base */
+                color: white;
+                padding: 10px 20px;
+                border-top-left-radius: 10px;
+                border-top-right-radius: 10px;       
             }
-            QPushButton { background-color: #44576D; border: none; padding: 8px 12px; border-radius: 4px; }
+            QTabBar::tab:selected {
+                background: #444;
+            }
+                           
+            QTabWidget::pane {
+                border: none;
+            }
+            QMainWindow, QWidget {
+                background-color: #22252A;
+                color: #E0E0E0;
+            }
+            QLabel { font-weight: 500; color: #E0E0E0; }
+            QLineEdit, QListWidget, QComboBox, QPlainTextEdit {
+                background-color: #2D3036;
+                color: #E0E0E0;
+                border: 1px solid #444;
+                padding: 4px;
+                border-radius: 4px;
+            }
+            QPushButton {
+                background-color: #44576D;
+                color: #E0E0E0;
+                border: none;
+                padding: 8px 12px;
+                border-radius: 4px;
+            }
             QPushButton:hover { background-color: #527191; }
             QPushButton:pressed { background-color: #3C4E65; }
             QListWidget { border: 1px dashed #555; }
+                           
+            QDateEdit {
+                background-color: #2c2c2c;
+                color: white;
+                border: 1px solid #555;
+            }
+                           
+            QDateEdit, QComboBox, QPushButton, QLineEdit {
+                background-color: #2e2e2e;
+                color: white;
+                padding: 6px;
+                border-radius: 8px;
+                border: 1px solid #555;
+            }
+
+            QCalendarWidget QAbstractItemView {
+                background-color: #2c2c2c;
+                color: white;
+                border-radius: 8px;
+            }
+
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background-color: #3a3a3a;
+            }
+                           
+            QTextEdit, QListWidget {
+                background-color: #2b2b2b;
+                color: #ccc;
+                border: 1px dashed #555;
+                border-radius: 8px;
+                padding: 10px;
+            }
+
+            QPushButton:hover {
+                background-color: #4a90e2;
+            }
+
+            QLabel {
+                color: white;
+            }
         """)
 
     @staticmethod
@@ -516,32 +602,35 @@ class MainWindow(QMainWindow):
         if not man:
             self.txt_log.appendPlainText("💡 Aucun taux manuel saisi. Le programme utilisera uniquement les taux ECB.")
 
-        # Chemin du script embarqué
-        base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
-        script_path = os.path.join(base_path, "ETL_SIAMP.py")
+        from ETL_SIAMP import main as etl_main
 
-        # Trouve python.exe (depuis PATH ou venv)
-        python_exe = shutil.which("python") or sys.executable
-
-        cmd = [python_exe, script_path, "--chemin_sortie", out, "--fichiers", *files]
+        # Construire sys.argv manuellement pour ETL_SIAMP
+        args = [
+            "--chemin_sortie", out,
+            "--fichiers", *files,
+            "--date", self.date_edit.date().toString("yyyy-MM-dd")
+        ]
         if man:
-            cmd += ["--taux_manuels", man]
-        date_str = self.date_edit.date().toString("yyyy-MM-dd")
-        cmd += ["--date", date_str]
+            args += ["--taux_manuels", man]
         if hasattr(self, "mois_selectionnes") and self.mois_selectionnes:
-            cmd += ["--mois_selectionnes", ",".join(self.mois_selectionnes)]
+            args += ["--mois_selectionnes", ",".join(self.mois_selectionnes)]
 
-
-        env = dict(os.environ, GOOEY="0")
-
+        # Simule sys.argv
+        sys.argv = ["ETL_SIAMP.py"] + args
         self.txt_log.clear()
         self.pbar.setValue(0)
 
-        self.worker = Worker(cmd, env)
-        self.worker.log.connect(self.txt_log.appendPlainText)
-        self.worker.progress.connect(self.pbar.setValue)
-        self.worker.done.connect(self._on_done)
-        self.worker.start()
+        try:
+            self.worker = Worker(args)
+            self.worker.log.connect(self.txt_log.appendPlainText)
+            self.worker.progress.connect(self.pbar.setValue)
+            self.worker.done.connect(self._on_done)
+            self.worker.start()
+
+        except Exception as e:
+            self.txt_log.appendPlainText(f"[ERREUR] {e}")
+            self._on_done(False)
+
 
         
     def _on_done(self, ok: bool):
@@ -556,6 +645,7 @@ class MainWindow(QMainWindow):
         try:
             from datetime import datetime, timedelta
             from ETL_SIAMP import get_ecb_rates
+            
 
             date = self.date_edit.date().toString("yyyy-MM-dd")
             limit_date = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=60)).strftime("%Y-%m-%d")
@@ -595,10 +685,10 @@ class MainWindow(QMainWindow):
                 self.txt_log.appendPlainText("[INFO] Aucune devise détectée dans les fichiers, veuillez glisser déposer vos fichiers à traiter pour détécter les devises.\n")
             else:
                 for cur in sorted(devises_utilisées):
-                    if cur in rates:
-                        self.txt_log.appendPlainText(f"  • {cur:<4} → {rates[cur]:.6f}")
-                    elif cur in manuels:
+                    if cur in manuels:
                         self.txt_log.appendPlainText(f"  • {cur:<4} → {manuels[cur]:.6f} (manuel)")
+                    elif cur in rates:
+                        self.txt_log.appendPlainText(f"  • {cur:<4} → {rates[cur]:.6f}")
                     else:
                         val, ok = QInputDialog.getDouble(
                             self, f"Taux manquant pour {cur}",
@@ -657,8 +747,13 @@ class MainWindow(QMainWindow):
             'zone_affectation': self.txt_zone_affectation.text(),
             'table': self.txt_table_file.text()
         }
-        with open(CONFIG_REF_FILE, 'w') as cfgfile:
+        dir_path = os.path.dirname(CONFIG_REF_FILE)
+        if dir_path and not os.path.exists(dir_path):
+            os.makedirs(dir_path, exist_ok=True)
+
+        with open(CONFIG_REF_FILE, 'w', encoding="utf-8") as cfgfile:
             config.write(cfgfile)
+
         QMessageBox.information(self, "Succès", "Les chemins des fichiers de référence ont été sauvegardés.")
         self._load_reference_paths()  # Recharge directement après sauvegarde
 

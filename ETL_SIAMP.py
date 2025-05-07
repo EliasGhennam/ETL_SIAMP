@@ -16,10 +16,19 @@ import io
 import os
 import re
 import sys
+
+def resource_path(relative_path):
+    """ Gère le chemin des fichiers dans l'exécutable Nuitka """
+    if getattr(sys, 'frozen', False):
+        # Executable Nuitka
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
 import warnings
 import configparser
 import traceback
 from time import sleep
+from ETL_SIAMP import resource_path
 from typing import Any
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -169,7 +178,7 @@ def main():
 
     args = parser.parse_args()
     # ----------------------------------------- Charger les chemins des fichiers de référence
-    CONFIG_REF_FILE = "ref_files.cfg"
+    CONFIG_REF_FILE = resource_path("mydata/ref_files.cfg")
     zone_affectation_path = None
     table_path = None
 
@@ -277,8 +286,10 @@ def main():
     devises_detectées = {d.upper() for d in devises_detectées}
 
     # ✅ Maintenant que les devises sont détectées, on appelle la fonction
-    rates = get_ecb_rates(args.date, required_currencies=devises_detectées)
-    rates.update(manu)
+    ecb_rates = get_ecb_rates(args.date, required_currencies=devises_detectées)
+    # Priorité aux manuels : si une devise est en manuel, on l'impose
+    rates = {**ecb_rates, **{k: manu[k] for k in manu}}
+
 
     zone_affectation_df = None
     table_df = None
@@ -294,6 +305,10 @@ def main():
     fusion = pd.concat(all_dfs, ignore_index=True)
 
     print(f"[DEBUG] 📌 Rates récupérés : {rates}", flush=True)
+    for k, v in rates.items():
+        source = "(manuel)" if k in manu else ""
+        print(f"  • {k} = {v:.6f} {source}", flush=True)
+
     currencies_in_file = set(fusion["CURRENCY"].dropna().unique())
     print(f"[DEBUG] 📌 Devises trouvées dans les fichiers : {currencies_in_file}", flush=True)
     missing_currencies = currencies_in_file - set(rates.keys())
@@ -373,7 +388,9 @@ def main():
             how="left",
             on="concat_key"
         )
-        fusion.drop(columns=["concat_key"], inplace=True)
+        if "concat_key" in fusion.columns:
+            fusion.drop(columns=["concat_key"], inplace=True)
+
         print(f"[INFO] ✅ Fusion Enseigne ret effectuée.")
     except Exception as e:
         print(f"[ERROR] ❌ Erreur fusion Enseigne ret : {e}")

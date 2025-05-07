@@ -1,11 +1,11 @@
-# version.txt
+# UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
     filevers=(1, 0, 0, 0),
     prodvers=(1, 0, 0, 0),
     mask=0x3f,
     flags=0x0,
-    OS=0x40004,
+    OS=0x4,
     fileType=0x1,
     subtype=0x0,
     date=(0, 0)
@@ -13,16 +13,18 @@ VSVersionInfo(
   kids=[
     StringFileInfo([
       StringTable(
-        '040904B0',
-        [StringStruct('CompanyName', 'SIAMP'),
-         StringStruct('FileDescription', 'Outil ETL pour fusionner des fichiers Excel'),
-         StringStruct('FileVersion', '1.0.0'),
-         StringStruct('InternalName', 'ETL_SIAMP'),
-         StringStruct('OriginalFilename', 'ETL_SIAMP.exe'),
-         StringStruct('ProductName', 'SIAMP ETL Tool'),
-         StringStruct('ProductVersion', '1.0.0'),
-         StringStruct('LegalCopyright', '© 2025 Elias Ghennam'),
-         StringStruct('Author', 'Elias Ghennam')])
+        '040904b0',
+        [
+          StringStruct('CompanyName', 'SIAMP'),
+          StringStruct('FileDescription', 'ETL SIAMP - Fusion Excel'),
+          StringStruct('FileVersion', '1.0.0'),
+          StringStruct('InternalName', 'ETL_SIAMP_GUI'),
+          StringStruct('LegalCopyright', '© 2025 Elias Ghennam / SIAMP'),
+          StringStruct('OriginalFilename', 'ETL_SIAMP_GUI.exe'),
+          StringStruct('ProductName', 'ETL SIAMP'),
+          StringStruct('ProductVersion', '1.0.0')
+        ]
+      )
     ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]

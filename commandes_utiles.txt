@@ -1,0 +1,20 @@
+Installer les dépendances du programme :
+
+    pip install pyinstaller pandas pyqt6 openpyxl requests
+
+Activer le venv : 
+
+    .\.venv\Scripts\Activate.ps1
+
+Commande pyinstaller pour compiler en onefile 
+
+pyinstaller --noconfirm --onefile --windowed --icon=siamp_icon.ico --add-data "mydata/ref_files.cfg;mydata" --add-data "mydata/siamp_icon.ico;mydata" --version-file version.txt ETL_SIAMP_GUI.py
+
+Commande pour signé l'exécutable finale :
+
+    & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe" sign /a /tr http://timestamp.digicert.com /td sha256 /fd sha256 build_etl\ETL_SIAMP_GUI.exe
+
+    & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe" sign /a /tr http://timestamp.digicert.com /td sha256 /fd sha256 "D:\STOCK BAIDU 2\OneDrive - 365\Documents\PROFESSIONNEL\SIAMP\ETL_SIAMP\build_etl\ETL SIAMP.exe"
+
+lancer le fichier .bat (dans le répertoire où il y a le .bat):
+    .\build_etl.bat    
