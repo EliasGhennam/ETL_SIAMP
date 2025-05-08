@@ -171,7 +171,14 @@ class MainWindow(QMainWindow):
             try:
                 xls = pd.ExcelFile(path, engine="openpyxl")
                 for sh in xls.sheet_names:
-                    df = xls.parse(sh, usecols="A:Q")
+                    try:
+                        df = xls.parse(sh)
+                    except Exception as e:
+                        raise ValueError(f"Erreur lors de la lecture de la feuille '{sh}' dans {path} : {e}")
+
+                    # Sélectionne jusqu'à 17 colonnes, même s'il y en a moins
+                    df = df.iloc[:, :17].copy()
+
                     df.columns = [c.strip().upper() for c in df.columns]
                     if "MONTH" in df.columns:
                         mois = pd.to_datetime(df["MONTH"], errors="coerce").dt.to_period("M")
@@ -338,6 +345,31 @@ class MainWindow(QMainWindow):
             for idx, path in enumerate(files, 1):
                 self.txt_log_historique.appendPlainText(f"[{idx}/{total}] Lecture : {os.path.basename(path)}")
                 df = pd.read_excel(path, engine="openpyxl")
+
+                # 🧠 Déduire l'année à partir du nom du fichier
+                filename = os.path.basename(path)
+                match = re.search(r"(20\d{2})", filename)
+                annee = match.group(1) if match else "2025"  # par défaut 2025 si non trouvé
+
+                # 🔁 Normalisation de la colonne MONTH
+                if "MONTH" in df.columns:
+                    try:
+                        def normaliser_month(val):
+                            if pd.isna(val):
+                                return pd.NaT
+                            if isinstance(val, (int, float)) and 1 <= int(val) <= 12:
+                                # Extrait l'année depuis le nom du fichier
+                                return pd.to_datetime(f"{int(val):02d}/01/{annee}", format="%m/%d/%Y", errors="coerce")
+                            try:
+                                return pd.to_datetime(val, errors="coerce")
+                            except:
+                                return pd.NaT
+
+                        df["MONTH"] = df["MONTH"].apply(normaliser_month)
+                    except Exception as e:
+                        self.txt_log_historique.appendPlainText(f"[WARN] Normalisation MONTH échouée : {e}")
+
+
                 all_dfs.append(df)
                 self.pbar_historique.setValue(int((idx / total) * 100))
             
@@ -582,7 +614,6 @@ class MainWindow(QMainWindow):
             try:
                 xls = pd.ExcelFile(path, engine="openpyxl")
                 for sh in xls.sheet_names:
-                    df = xls.parse(sh, usecols="A:Q")
                     df.columns = [c.strip().upper() for c in df.columns]
                     if "MONTH" in df.columns:
                         mois = pd.to_datetime(df["MONTH"], errors="coerce").dt.to_period("M")
@@ -667,10 +698,15 @@ class MainWindow(QMainWindow):
                 try:
                     xls = pd.ExcelFile(path, engine="openpyxl")
                     for sh in filter(TURNOVER_SHEET.match, xls.sheet_names):
-                        df = xls.parse(sh, usecols="A:Q")
-                        df.columns = [str(c).strip().upper() for c in df.columns]
-                        if "CURRENCY" in df.columns:
-                            devises_utilisées.update(df["CURRENCY"].dropna().astype(str).str.strip().str.upper())
+                        try:
+                            df = xls.parse(sh)
+                            df = df.iloc[:, :17]  # jusqu’à 17 colonnes si présentes
+                            df.columns = [str(c).strip().upper() for c in df.columns]
+                            if "CURRENCY" in df.columns:
+                                devises_utilisées.update(df["CURRENCY"].dropna().astype(str).str.strip().str.upper())
+                        except Exception as e:
+                            self.txt_log.appendPlainText(f"[WARN] ⚠ Impossible de lire {path} – {e}")
+
                 except Exception as e:
                     self.txt_log.appendPlainText(f"[WARN] ⚠ Impossible de lire {path} : {e}")
 
@@ -688,8 +724,9 @@ class MainWindow(QMainWindow):
                     if cur in manuels:
                         self.txt_log.appendPlainText(f"  • {cur:<4} → {manuels[cur]:.6f} (manuel)")
                     elif cur in rates:
-                        self.txt_log.appendPlainText(f"  • {cur:<4} → {rates[cur]:.6f}")
+                        self.txt_log.appendPlainText(f"  • {cur:<4} → {rates[cur]:.6f} (ECB)")
                     else:
+                        # ➕ Si la devise est introuvable, demander à l'utilisateur
                         val, ok = QInputDialog.getDouble(
                             self, f"Taux manquant pour {cur}",
                             f"Aucun taux trouvé pour {cur}.\nEntrez le taux de conversion vers EUR :",
@@ -700,6 +737,7 @@ class MainWindow(QMainWindow):
                             self.txt_log.appendPlainText(f"  • {cur:<4} → {val:.6f} (ajouté manuellement)")
                         else:
                             self.txt_log.appendPlainText(f"  • {cur:<4} → ❌ Non disponible")
+
 
                 # Mise à jour du champ texte
                 self.txt_manual.setText(",".join(f"{k}={v}" for k, v in manuels.items()))
