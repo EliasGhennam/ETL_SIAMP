@@ -232,7 +232,14 @@ def main():
         try:
             xls = pd.ExcelFile(path, engine="openpyxl")
             for sh in filter(TURNOVER_SHEET.match, xls.sheet_names):
-                df = xls.parse(sh, usecols="A:Q")
+                try:
+                    df = xls.parse(sh)
+                except Exception as e:
+                    raise ValueError(f"Erreur lors de la lecture de la feuille '{sh}' dans {path} : {e}")
+
+                # Sélectionne jusqu'à 17 colonnes, même s'il y en a moins
+                df = df.iloc[:, :17].copy()
+
                 df.dropna(axis=1, how="all", inplace=True)
                 df.columns = [c.strip() for c in df.columns]
 
