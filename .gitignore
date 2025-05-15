@@ -8,6 +8,8 @@ output/
 fichiers_excel/
 dist/
 
+tests/*.xlsx
+
 # Si projet Node accidentellement ajouté
 node_modules/
 build/
