@@ -43,8 +43,6 @@ if sys.stdout and hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
-***REMOVED***
-
 # ------------------------------------------------------------------ taux de change
 import requests
 import xml.etree.ElementTree as ET
