@@ -34,7 +34,6 @@ if sys.stdout and hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
-API_KEY = "tgogyMcj5vxTz5XDw9WDA90gYIueAV99IbgH"
 
 # ------------------------------------------------------------------ taux de change
 import requests

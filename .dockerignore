@@ -1,0 +1,21 @@
+# Ignorer fichiers/dossiers inutiles dans le build
+__pycache__/
+*.pyc
+*.pyo
+*.log
+*.xlsx
+*.csv
+*.xls
+*.tmp
+*.bak
+*.sqlite
+*.db
+*.zip
+*.rar
+*.7z
+.vscode/
+.venv/
+.env
+.DS_Store
+.idea/
+tests/input1.xlsx
