@@ -1,0 +1,20 @@
+# Fichiers/dossiers inutiles dans l'image Docker
+__pycache__/
+*.pyc
+*.pyo
+*.log
+*.xlsx
+*.csv
+*.xls
+*.tmp
+*.bak
+*.sqlite
+*.db
+*.zip
+*.rar
+*.7z
+.vscode/
+.venv/
+.env
+.DS_Store
+.idea/
