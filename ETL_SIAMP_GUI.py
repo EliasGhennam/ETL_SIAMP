@@ -45,6 +45,16 @@ ICON_PATH        = resource_path("mydata/siamp_icon.ico")
 CONFIG_FILE      = resource_path("mydata/siamp_api_key.cfg")
 CONFIG_REF_FILE  = resource_path("mydata/ref_files.cfg")
 
+# Définir un mapping de colonnes standard
+COLUMN_MAPPING = {
+    # Variations possibles -> Nom standardisé
+    "MONTH": ["MONTH", "DATE", "PERIODE"],
+    "CUSTOMER NAME": ["CUSTOMER NAME", "CUSTOMER", "CLIENT", "NOM CLIENT"],
+    "REFERENCE": ["REFERENCE", "REF", "REFERENCE PRODUIT"],
+    "TURNOVER": ["TURNOVER", "CA", "CHIFFRE D'AFFAIRE", "SALES"],
+    "QUANTITY": ["QUANTITY", "QTY", "QUANTITE"],
+    "CURRENCY": ["CURRENCY", "DEVISE", "MONNAIE"]
+}
 
 # ---------------------------------------------------------------- worker QThread
 class Worker(QThread):
@@ -130,7 +140,7 @@ class DropListWidget(QListWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ETL SIAMP — Fusion Excel")
+        self.setWindowTitle("ETL SIAMP — Fusion Excel")
         self.setWindowIcon(QIcon(ICON_PATH))
         self.resize(760, 640)
         self._build_tabs()
@@ -251,9 +261,9 @@ class MainWindow(QMainWindow):
         btn_bar = QHBoxLayout()
         btn_add = QPushButton("Ajouter…")
         btn_add.clicked.connect(self._add_historique_files)
-        btn_bar.addWidget(btn_add)
         btn_rem = QPushButton("Retirer sélection")
         btn_rem.clicked.connect(self._remove_historique_files)
+        btn_bar.addWidget(btn_add)
         btn_bar.addWidget(btn_rem)
         btn_bar.addStretch()
         layout.addLayout(btn_bar)
@@ -275,7 +285,7 @@ class MainWindow(QMainWindow):
         self.pbar_historique.setValue(0)
         layout.addWidget(self.pbar_historique)
 
-        btn_run = QPushButton("▶ Fusionner l’historique")
+        btn_run = QPushButton("▶ Fusionner l'historique")
         btn_run.setMinimumHeight(38)
         btn_run.clicked.connect(self._run_historique_fusion)
         layout.addWidget(btn_run)
@@ -301,6 +311,65 @@ class MainWindow(QMainWindow):
         if path:
             self.txt_historique_out.setText(path)
 
+    def _extract_year_from_filename(self, filename):
+        """Extrait l'année du nom du fichier (ex: STATS 2024.xlsx -> 2024)"""
+        match = re.search(r'20\d{2}', filename)
+        if match:
+            return int(match.group())
+        return None
+
+    def _format_date_column(self, df, year=None):
+        """Formate la colonne MONTH en gérant les différents formats de date possibles"""
+        if "MONTH" not in df.columns:
+            return df
+
+        # Créer une copie de la colonne pour préserver les données originales
+        df["DATE_TEMP"] = df["MONTH"].astype(str)
+
+        # 1. D'abord essayer de parser comme date complète
+        try:
+            dates = pd.to_datetime(df["DATE_TEMP"], format='%d/%m/%Y', errors='coerce')
+            mask_fr = dates.notna()
+            if mask_fr.any():
+                df.loc[mask_fr, "DATE_TEMP"] = dates[mask_fr].dt.strftime("%d/%m/%Y")
+        except:
+            pass
+
+        try:
+            dates = pd.to_datetime(df["DATE_TEMP"], errors='coerce')
+            mask_other = dates.notna()
+            if mask_other.any():
+                df.loc[mask_other, "DATE_TEMP"] = dates[mask_other].dt.strftime("%d/%m/%Y")
+        except:
+            pass
+
+        # 2. Pour les valeurs qui sont des nombres (incluant les décimales), convertir en date avec l'année du fichier
+        if year:
+            # Convertir en numérique et arrondir pour gérer les .0 ou .00
+            df["DATE_TEMP_NUM"] = pd.to_numeric(df["DATE_TEMP"], errors='coerce')
+            numeric_mask = df["DATE_TEMP_NUM"].notna()
+            if numeric_mask.any():
+                try:
+                    # Arrondir et vérifier si dans la plage 1-12
+                    df.loc[numeric_mask, "DATE_TEMP_NUM"] = df.loc[numeric_mask, "DATE_TEMP_NUM"].round()
+                    valid_months = (df["DATE_TEMP_NUM"] >= 1) & (df["DATE_TEMP_NUM"] <= 12)
+                    if valid_months.any():
+                        df.loc[valid_months, "DATE_TEMP"] = pd.to_datetime(
+                            df.loc[valid_months, "DATE_TEMP_NUM"].apply(
+                                lambda x: f"01/{int(x):02d}/{year}"
+                            ),
+                            format="%d/%m/%Y"
+                        ).dt.strftime("%d/%m/%Y")
+                except:
+                    pass
+            
+            df = df.drop(columns=["DATE_TEMP_NUM"])
+
+        # Remplacer l'ancienne colonne MONTH
+        df["MONTH"] = df["DATE_TEMP"]
+        df = df.drop(columns=["DATE_TEMP"])
+        return df
+
     def _run_historique_fusion(self):
         files = self.lst_historique_files.files()
         if not files:
@@ -310,7 +379,7 @@ class MainWindow(QMainWindow):
         if not out:
             return QMessageBox.warning(self, "Erreur", "Spécifiez le fichier de sortie.")
 
-        try: #Ce try la semble poser problème
+        try:
             self.txt_log_historique.clear()
             self.pbar_historique.setValue(0)
             all_dfs = []
@@ -319,6 +388,13 @@ class MainWindow(QMainWindow):
             for idx, path in enumerate(files, 1):
                 self.txt_log_historique.appendPlainText(f"[{idx}/{total}] Lecture : {os.path.basename(path)}")
                 df = pd.read_excel(path, engine="openpyxl")
+                
+                # Extraire l'année du nom de fichier
+                year = self._extract_year_from_filename(os.path.basename(path))
+                
+                # Formater les dates
+                df = self._format_date_column(df, year)
+                
                 all_dfs.append(df)
                 self.pbar_historique.setValue(int((idx / total) * 100))
             
@@ -328,7 +404,7 @@ class MainWindow(QMainWindow):
 
             fusion = pd.concat(all_dfs, ignore_index=True)
 
-            # Réordonner les colonnes comme dans l’ETL
+            # Réordonner les colonnes comme dans l'ETL
             ORDER = [
                 "MONTH", "SIAMP UNIT", "SALE TYPE", "TYPE OF CANAL", "ENSEIGNE", "CUSTOMER NAME",
                 "COMMERCIAL AREA", "SUR FAMILLE", "FAMILLE", "REFERENCE", "PRODUCT NAME",
@@ -338,31 +414,84 @@ class MainWindow(QMainWindow):
             fusion = fusion[[c for c in ORDER if c in fusion.columns] +
                             [c for c in fusion.columns if c not in ORDER]]
 
+            # Sauvegarder en Excel
             fusion.to_excel(out, index=False)
 
-            # ➡️ ➕ Ajouter la mise en forme tableau avec filtres
+            # Appliquer le formatage Excel
             wb = load_workbook(out)
             ws = wb.active
 
+            # Définir la plage du tableau et créer une table formatée
             last_col_letter = get_column_letter(ws.max_column)
             last_row = ws.max_row
             table_range = f"A1:{last_col_letter}{last_row}"
+
+            # Créer et appliquer la table avec style
             table = Table(displayName="HistoriqueTable", ref=table_range)
             table.tableStyleInfo = TableStyleInfo(
-                name="TableStyleMedium9",
+                name="TableStyleMedium2",
                 showFirstColumn=False,
                 showLastColumn=False,
                 showRowStripes=True,
                 showColumnStripes=False
             )
-
-            # Supprime toute table existante et ajoute la nouvelle
+            
+            # Supprimer toute table existante et ajouter la nouvelle
             ws._tables.clear()
             ws.add_table(table)
 
+            # Formater les colonnes spécifiques
+            for idx, column in enumerate(ws[1], 1):
+                col_letter = get_column_letter(idx)
+                
+                # Formater la colonne MONTH comme date
+                if column.value == "MONTH":
+                    for cell in ws[col_letter][1:]:  # Skip header
+                        if cell.value:
+                            try:
+                                # Convertir en date Excel
+                                date_val = pd.to_datetime(cell.value, format="%d/%m/%Y")
+                                cell.value = date_val
+                                cell.number_format = "dd/mm/yyyy"
+                            except:
+                                pass
+
+                # Formater uniquement la colonne "TURNOVER €" avec le symbole €
+                elif column.value == "TURNOVER €":
+                    for cell in ws[col_letter][1:]:
+                        if cell.value and isinstance(cell.value, (int, float)):
+                            cell.number_format = "#,##0.00 €"
+
+                # Formater les autres colonnes monétaires sans le symbole €
+                elif column.value in ["TURNOVER", "C.A en €", "VARIABLE COSTS", "COGS", "VAR Margin", "Margin"]:
+                    for cell in ws[col_letter][1:]:
+                        if cell.value and isinstance(cell.value, (int, float)):
+                            cell.number_format = "#,##0.00"
+
+                # Formater la colonne QUANTITY
+                elif column.value == "QUANTITY":
+                    for cell in ws[col_letter][1:]:
+                        if cell.value and isinstance(cell.value, (int, float)):
+                            cell.number_format = "#,##0"
+
+            # Figer la première ligne
+            ws.freeze_panes = "A2"
+
+            # Ajuster la largeur des colonnes
+            for column in ws.columns:
+                max_length = 0
+                column_letter = get_column_letter(column[0].column)
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = (max_length + 2)
+                ws.column_dimensions[column_letter].width = min(adjusted_width, 50)
 
             wb.save(out)
-            self.txt_log_historique.appendPlainText(f"✅ Fusion terminée avec filtres activés. Fichier créé : {out}")
+            self.txt_log_historique.appendPlainText(f"✅ Fusion terminée avec mise en forme optimisée. Fichier créé : {out}")
             self.pbar_historique.setValue(100)
         except Exception as e:
             self.txt_log_historique.appendPlainText(f"[ERROR] ❌ Une erreur est survenue pendant la fusion : {e}")
@@ -377,7 +506,7 @@ class MainWindow(QMainWindow):
 
         # ► Sélecteur de date + bouton Charger taux
         row_date = QHBoxLayout()
-        row_date.addWidget(QLabel("Date des taux :"))
+        row_date.addWidget(QLabel("Date des taux :"))
         self.date_edit = QDateEdit(QDate.currentDate())
         self.date_edit.setCalendarPopup(True)
         row_date.addWidget(self.date_edit)
@@ -389,13 +518,13 @@ class MainWindow(QMainWindow):
 
         # Taux manuel
         self.row_manual = QHBoxLayout()
-        self.row_manual.addWidget(QLabel("Taux manuels (USD=0.93,GBP=1.15) :"))
+        self.row_manual.addWidget(QLabel("Taux manuels (USD=0.93,GBP=1.15) :"))
         self.txt_manual = QLineEdit()
         self.row_manual.addWidget(self.txt_manual)
         layout.addLayout(self.row_manual)
 
         # Liste de fichiers
-        layout.addWidget(QLabel("Fichiers Excel :"))
+        layout.addWidget(QLabel("Fichiers Excel :"))
         self.lst_files = DropListWidget(on_click_callback=self._add_files)
         layout.addWidget(self.lst_files)
 
@@ -403,7 +532,6 @@ class MainWindow(QMainWindow):
         btn_bar = QHBoxLayout()
         btn_add = QPushButton("Ajouter…")
         btn_add.clicked.connect(self._add_files)
-        btn_bar.addWidget(btn_add)
         btn_detect = QPushButton("🗓️ Détecter le ou les mois à traiter")
         btn_detect.clicked.connect(self._detect_months)
         btn_bar.addWidget(btn_detect)
@@ -425,7 +553,7 @@ class MainWindow(QMainWindow):
 
         # Chemin de sortie
         row_out = QHBoxLayout()
-        row_out.addWidget(QLabel("Fichier de sortie :"))
+        row_out.addWidget(QLabel("Fichier de sortie :"))
         self.txt_out = QLineEdit("fusion.xlsx")
         btn_out = QPushButton("Parcourir…")
         btn_out.clicked.connect(self._choose_output)
@@ -549,7 +677,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "Terminé" if ok else "Erreur",
-            "Traitement terminé avec succès !" if ok else "Le script a échoué."
+            "Traitement terminé avec succès !" if ok else "Le script a échoué."
         )
 
     def _load_rates(self):
@@ -712,7 +840,7 @@ class MainWindow(QMainWindow):
 
 
 # --------------------------------------------------
-# Lancement de l’application
+# Lancement de l'application
 # --------------------------------------------------
 if __name__ == "__main__":
     app = QApplication(sys.argv)
@@ -721,3 +849,34 @@ if __name__ == "__main__":
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
+
+def normalize_columns(df):
+    normalized_columns = df.columns.copy()
+    for standard_name, variations in COLUMN_MAPPING.items():
+        for col in df.columns:
+            if col.strip().upper() in [v.strip().upper() for v in variations]:
+                normalized_columns = normalized_columns.str.replace(col, standard_name)
+    df.columns = normalized_columns
+    return df
+
+def clean_and_validate_data(df):
+    # Conversion des dates
+    if "MONTH" in df.columns:
+        df["MONTH"] = pd.to_datetime(df["MONTH"], errors="coerce")
+    
+    # Nettoyage des valeurs numériques
+    numeric_columns = ["TURNOVER", "QUANTITY"]
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    
+    # Standardisation des devises
+    if "CURRENCY" in df.columns:
+        df["CURRENCY"] = df["CURRENCY"].str.strip().str.upper()
+    
+    return df
+
+def identify_merge_keys(df):
+    potential_keys = ["REFERENCE", "CUSTOMER NAME", "MONTH"]
+    available_keys = [key for key in potential_keys if key in df.columns]
+    return available_keys
