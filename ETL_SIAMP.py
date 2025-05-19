@@ -5,8 +5,8 @@ ETL_SIAMP.py – fusion & enrichissement Turnover
 
 • Récupère les taux historiques si votre plan le permet (/historical),
   sinon bascule automatiquement sur le temps réel (/rates).
-• Ajoute VARIABLE COSTS (CD+FSD) et COGS (PRU) quelle que soit l’écriture.
-• Maintient le calcul « C.A en € ».Fdate
+• Ajoute VARIABLE COSTS (CD+FSD) et COGS (PRU) quelle que soit l'écriture.
+• Maintient le calcul « C.A en € ».Fdate
 • Réordonne les colonnes métier.
 """
 from __future__ import annotations
@@ -216,6 +216,7 @@ def main():
     COGS_PATTS = [r"^PRU", r"^COGS"]
 
     all_dfs: list[pd.DataFrame] = []
+    fichiers_ignores = []  # Pour stocker les fichiers ignorés et leurs motifs
     total = len(files)
     for idx, path in enumerate(files, 1):
         print(f"[{idx}/{total}] {os.path.basename(path)}", flush=True)
@@ -223,7 +224,6 @@ def main():
             xls = pd.ExcelFile(path, engine="openpyxl")
             for sh in filter(TURNOVER_SHEET.match, xls.sheet_names):
                 df = xls.parse(sh, usecols="A:Q")
-                df.dropna(axis=1, how="all", inplace=True)
                 df.columns = [c.strip() for c in df.columns]
 
                 # renommage
@@ -252,6 +252,7 @@ def main():
 
                 df["NOMFICHIER"] = os.path.basename(path)
                 df["FEUILLE"]     = sh
+
                 # Conversion explicite de la première colonne (MONTH) en datetime si possible
                 if "MONTH" in df.columns:
                     try:
@@ -261,7 +262,28 @@ def main():
                     except Exception as e:
                         print(f"       ⚠ Erreur conversion 'MONTH' en date : {e}", flush=True)
 
-                all_dfs.append(df)
+                # Définir les deux formats stricts
+                FORMATS = [
+                    ["MONTH", "SIAMP UNIT", "SALE TYPE", "TYPE OF CANAL", "ENSEIGNE", "CUSTOMER NAME", "COMMERCIAL AREA", "SUR FAMILLE", "FAMILLE", "REFERENCE", "PRODUCT NAME", "QUANTITY", "TURNOVER", "CURRENCY", "COUNTRY", "VARIABLE COSTS", "COGS"],
+                    ["MONTH", "SIAMP UNIT", "SALE TYPE", "TYPE OF CANAL", "ENSEIGNE", "CUSTOMER NAME", "COMMERCIAL AREA", "SUR FAMILLE", "FAMILLE", "REFERENCE", "PRODUCT NAME", "QUANTITY", "TURNOVER", "CURRENCY", "COUNTRY"]
+                ]
+
+                # VALIDATION STRICTE
+                is_valid, motif, cols_manquantes, cols_sup = validate_strict_columns(df, os.path.basename(path), FORMATS, return_details=True)
+                if is_valid:
+                    all_dfs.append(df)
+                else:
+                    fichiers_ignores.append({
+                        'fichier': os.path.basename(path),
+                        'motif': motif,
+                        'colonnes_manquantes': cols_manquantes,
+                        'colonnes_sup': cols_sup
+                    })
+                    print(f"\n❌ [IGNORÉ] {os.path.basename(path)} : Fichier non conforme, il ne sera pas fusionné.", flush=True)
+                    if cols_manquantes:
+                        print(f"   → Colonnes manquantes : {cols_manquantes}", flush=True)
+                    if cols_sup:
+                        print(f"   → Colonnes supplémentaires : {cols_sup}", flush=True)
 
         except Exception as e:
             print(f"  [ERROR] {path}: {e}", flush=True)
@@ -270,6 +292,7 @@ def main():
         print(f"PROGRESS:{int(idx/total*100)}%", flush=True)
 
     if not all_dfs:
+        print("\n❌ Aucun fichier valide trouvé. Arrêt du script.", flush=True)
         sys.exit("Aucune feuille valide trouvée.")
 
     # ➕ Convertir en majuscules (important)
@@ -334,7 +357,7 @@ def main():
         fusion["REFERENCE"] = fusion["REFERENCE"].astype(str).str.strip()
         table_df.iloc[:, 14] = table_df.iloc[:, 14].astype(str).str.strip()  # colonne O
 
-        # Fusion sans écraser l’existante
+        # Fusion sans écraser l'existante
         fusion = fusion.merge(
             table_df[[table_df.columns[14], table_df.columns[16]]].rename(columns={
                 table_df.columns[14]: "REFERENCE",
@@ -409,7 +432,7 @@ def main():
             fusion = fusion[fusion["MONTH"].dt.to_period("M").astype(str).isin(mois_choisis)]
         else:
             if os.environ.get("FROM_GUI") == "1":
-                print("[ERROR] ❌ Aucun mois sélectionné et interaction impossible (lancé depuis GUI). Merci de sélectionner les mois dans l’interface.")
+                print("[ERROR] ❌ Aucun mois sélectionné et interaction impossible (lancé depuis GUI). Merci de sélectionner les mois dans l'interface.")
                 sys.exit(1)
             else:
                 print("\n⏳ Entrez les dates à inclure séparées par une virgule (ex: 2025-01-01,2025-01-15) :")
@@ -503,7 +526,7 @@ def main():
                 showColumnStripes=False
             )
             
-            # ─── Videz d’abord toute table existante ───────────────────────
+            # ─── Videz d'abord toute table existante ───────────────────────
             ws._tables.clear()
 
             # ─── Ajout de la nouvelle table ───────────────────────────────
@@ -525,13 +548,56 @@ def main():
             print("[WARN] ⚠️ Impossible d'ajouter la table : pas assez de données (0 colonne ou 1 ligne).", flush=True)
 
         wb.save(out)
-        print(f"\n✅ Fusion terminée – fichier créé : {out}\n", flush=True)
+        if fichiers_ignores:
+            print(f"\n⚠️ Fusion partielle : certains fichiers n'ont pas été traités à cause de colonnes non conformes :", flush=True)
+            for f in fichiers_ignores:
+                print(f"   - {f['fichier']}", flush=True)
+                print(f"     Motif : {f['motif']}", flush=True)
+                if f['colonnes_manquantes']:
+                    print(f"     Colonnes manquantes : {f['colonnes_manquantes']}", flush=True)
+                if f['colonnes_sup']:
+                    print(f"     Colonnes supplémentaires : {f['colonnes_sup']}", flush=True)
+            print(f"\n⚠️ Fusion terminée avec des fichiers ignorés. Voir détails ci-dessus.\n", flush=True)
+        else:
+            print(f"\n✅ Fusion terminée – fichier créé : {out}\n", flush=True)
 
     except Exception as e:
         print(f"[ERROR] ❌ Une erreur s'est produite pendant la mise en forme Excel : {e}", flush=True)
         sys.exit(1)
 
-
+def validate_strict_columns(df, filename, formats, return_details=False):
+    """
+    Valide la présence et l'ordre des colonnes sur la base des en-têtes uniquement.
+    Affiche un log détaillé en cas de problème.
+    Si return_details=True, retourne (is_valid, motif, colonnes_manquantes, colonnes_sup)
+    """
+    def norm(col):
+        return col.strip().replace(" ", "").replace("_", "").upper()
+    cols = [norm(c) for c in df.columns]
+    for fmt in formats:
+        fmt_norm = [norm(c) for c in fmt]
+        if cols[:len(fmt_norm)] == fmt_norm:
+            if return_details:
+                return True, '', [], []
+            return True
+    # Si aucun format ne correspond, on détaille
+    motif = "Colonnes manquantes"
+    cols_manquantes = []
+    for fmt in formats:
+        missing = [c for c in fmt if norm(c) not in cols]
+        if missing:
+            cols_manquantes.extend(missing)
+    cols_sup = [c for c in df.columns if norm(c) not in [norm(x) for f in formats for x in f]]
+    if return_details:
+        return False, motif, cols_manquantes, cols_sup
+    # Affichage classique (non utilisé ici)
+    print(f"[ERREUR COLONNES] {filename}")
+    print(f"  Colonnes trouvées : {df.columns.tolist()}")
+    if cols_manquantes:
+        print(f"  Colonnes manquantes : {cols_manquantes}")
+    if cols_sup:
+        print(f"  Colonnes supplémentaires : {cols_sup}")
+    return False
 
 # --------------------------------------------------
 # Lancement sécurisé du script avec capture des erreurs

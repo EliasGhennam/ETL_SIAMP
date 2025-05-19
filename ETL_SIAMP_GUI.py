@@ -849,34 +849,3 @@ if __name__ == "__main__":
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
-
-def normalize_columns(df):
-    normalized_columns = df.columns.copy()
-    for standard_name, variations in COLUMN_MAPPING.items():
-        for col in df.columns:
-            if col.strip().upper() in [v.strip().upper() for v in variations]:
-                normalized_columns = normalized_columns.str.replace(col, standard_name)
-    df.columns = normalized_columns
-    return df
-
-def clean_and_validate_data(df):
-    # Conversion des dates
-    if "MONTH" in df.columns:
-        df["MONTH"] = pd.to_datetime(df["MONTH"], errors="coerce")
-    
-    # Nettoyage des valeurs numériques
-    numeric_columns = ["TURNOVER", "QUANTITY"]
-    for col in numeric_columns:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    
-    # Standardisation des devises
-    if "CURRENCY" in df.columns:
-        df["CURRENCY"] = df["CURRENCY"].str.strip().str.upper()
-    
-    return df
-
-def identify_merge_keys(df):
-    potential_keys = ["REFERENCE", "CUSTOMER NAME", "MONTH"]
-    available_keys = [key for key in potential_keys if key in df.columns]
-    return available_keys
