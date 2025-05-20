@@ -252,6 +252,8 @@ def main():
 
                 df["NOMFICHIER"] = os.path.basename(path)
                 df["FEUILLE"]     = sh
+                df["SOURCE"] = f"MENSUEL_{datetime.now().strftime('%Y-%m-%d')}"
+
 
                 # Conversion explicite de la première colonne (MONTH) en datetime si possible
                 if "MONTH" in df.columns:
@@ -315,6 +317,29 @@ def main():
 
     fusion = pd.concat(all_dfs, ignore_index=True)
 
+    # ➤ Nettoyage des chaînes de caractères : strip, upper, suppression des caractères invisibles
+    def nettoyer_str(s):
+        if pd.isna(s):
+            return None
+        if isinstance(s, str):
+            s = s.strip().upper()
+            s = re.sub(r'[^\x20-\x7E\u00A0-\uFFFF]', '', s)  # supprime caractères invisibles
+            return s
+        return s
+
+    # Appliquer à toutes les colonnes de type objet (texte)
+    for col in fusion.select_dtypes(include="object").columns:
+        fusion[col] = fusion[col].apply(nettoyer_str)
+
+
+    # ➤ Supprimer les doublons métier basés sur les colonnes clés
+    colonnes_cle = ["MONTH", "REFERENCE", "CUSTOMER NAME", "QUANTITY"]
+    nb_avant = fusion.shape[0]
+    fusion = fusion.drop_duplicates(subset=colonnes_cle, keep="last")
+    nb_apres = fusion.shape[0]
+    print(f"[INFO] 🧹 {nb_avant - nb_apres} doublon(s) supprimé(s) après nettoyage logique", flush=True)
+
+
     print(f"[DEBUG] 📌 Rates récupérés : {rates}", flush=True)
     currencies_in_file = set(fusion["CURRENCY"].dropna().unique())
     print(f"[DEBUG] 📌 Devises trouvées dans les fichiers : {currencies_in_file}", flush=True)
@@ -353,21 +378,46 @@ def main():
 
     # ---------------------------- SUR FAMILLE ----------------------------
     try:
-        # Nettoyage préalable
-        fusion["REFERENCE"] = fusion["REFERENCE"].astype(str).str.strip()
-        table_df.iloc[:, 14] = table_df.iloc[:, 14].astype(str).str.strip()  # colonne O
+        # Nettoyage préalable des colonnes REFERENCE et Sur-famille dans table
+        table_df.iloc[:, 14] = table_df.iloc[:, 14].astype(str).str.strip().str.upper()
+        table_df.iloc[:, 16] = table_df.iloc[:, 16].astype(str).str.strip().str.upper()
 
-        # Fusion sans écraser l'existante
+        # Supprimer les doublons masqués sur REFERENCE
+        before = table_df.shape[0]
+        table_df = table_df.drop_duplicates(subset=table_df.columns[14], keep="last")
+        after = table_df.shape[0]
+        print(f"[INFO] 🔎 Table nettoyée : {before - after} doublon(s) masqué(s) supprimé(s) sur REFERENCE", flush=True)
+
+        # Nettoyage de REFERENCE côté fusion
+        fusion["REFERENCE"] = fusion["REFERENCE"].astype(str).str.strip().str.upper()
+
+        # Fusionner proprement avec REFERENCE unique
         fusion = fusion.merge(
             table_df[[table_df.columns[14], table_df.columns[16]]].rename(columns={
                 table_df.columns[14]: "REFERENCE",
-                table_df.columns[16]: "Sur-famille"  # ⚠️ Respectez bien la casse
+                table_df.columns[16]: "Sur-famille"
             }),
             how="left",
             on="REFERENCE"
         )
 
         print("[INFO] ✅ Colonne 'Sur famille' fusionnée et 'SUR FAMILLE' consolidée.")
+
+        # Nettoyage de tous les caractères invisibles restants
+        def nettoyer_cellules(df):
+            return df.applymap(
+                lambda x: (
+                    re.sub(r'[^\x09\x0A\x0D\x20-\x7E\u00A0-\uFFFF]', '', str(x))
+                    if isinstance(x, str) else x
+                )
+            )
+        fusion = nettoyer_cellules(fusion)
+
+    except Exception as e:
+        print(f"[ERROR] ❌ Erreur fusion SUR FAMILLE : {e}")
+        traceback.print_exc()
+
+        
         def nettoyer_cellules(df):
             return df.applymap(
                 lambda x: (
@@ -384,12 +434,23 @@ def main():
 
     # ---------------------------- ENSEIGNE RET ----------------------------
     try:
-        fusion["ENSEIGNE"] = fusion["ENSEIGNE"].fillna("").astype(str).str.strip()
-        fusion["CUSTOMER NAME"] = fusion["CUSTOMER NAME"].fillna("").astype(str).str.strip()
+        # Nettoyage et normalisation dans fusion
+        fusion["ENSEIGNE"] = fusion["ENSEIGNE"].fillna("").astype(str).str.strip().str.upper()
+        fusion["CUSTOMER NAME"] = fusion["CUSTOMER NAME"].fillna("").astype(str).str.strip().str.upper()
         fusion["concat_key"] = fusion["ENSEIGNE"] + fusion["CUSTOMER NAME"]
 
-        table_df["concat_key"] = table_df.iloc[:, 21].astype(str).str.strip()  # colonne V dans table
+        # Nettoyage dans table
+        table_df.iloc[:, 21] = table_df.iloc[:, 21].astype(str).str.strip().str.upper()  # colonne V
+        table_df.iloc[:, 22] = table_df.iloc[:, 22].astype(str).str.strip().str.upper()  # colonne W
+        table_df["concat_key"] = table_df.iloc[:, 21]  # V déjà nettoyée
 
+        # Suppression des doublons sur concat_key
+        before = table_df.shape[0]
+        table_df = table_df.drop_duplicates(subset="concat_key", keep="last")
+        after = table_df.shape[0]
+        print(f"[INFO] 🔎 Table nettoyée : {before - after} doublon(s) masqué(s) supprimé(s) sur concat_key (ENSEIGNE + CUSTOMER NAME)", flush=True)
+
+        # Merge
         fusion = fusion.merge(
             table_df[["concat_key", table_df.columns[22]]].rename(columns={table_df.columns[22]: "Enseigne ret"}),  # colonne W
             how="left",
@@ -397,9 +458,11 @@ def main():
         )
         fusion.drop(columns=["concat_key"], inplace=True)
         print(f"[INFO] ✅ Fusion Enseigne ret effectuée.")
+
     except Exception as e:
         print(f"[ERROR] ❌ Erreur fusion Enseigne ret : {e}")
         traceback.print_exc()
+
 
     # Supprimer la colonne 'ENSEIGNE' car elle n'est pas utile (copie de CUSTOMER NAME)
     if "ENSEIGNE" in fusion.columns:
@@ -498,6 +561,27 @@ def main():
 
     fusion = fusion[[c for c in ORDER if c in fusion.columns]
                     + [c for c in fusion.columns if c not in ORDER]]
+    
+    before = fusion.shape[0]
+
+    # ➤ Nettoyage global des chaînes : suppression espaces, mise en majuscule, suppression caractères invisibles
+    def nettoyer_str(s):
+        if pd.isna(s):
+            return None
+        if isinstance(s, str):
+            s = s.strip().upper()
+            s = re.sub(r'[^\x20-\x7E\u00A0-\uFFFF]', '', s)  # supprime caractères invisibles
+            return s
+        return s
+
+    # Appliquer le nettoyage sur toutes les colonnes objet
+    for col in fusion.select_dtypes(include="object").columns:
+        fusion[col] = fusion[col].apply(nettoyer_str)
+
+    fusion.drop_duplicates(inplace=True)
+    after = fusion.shape[0]
+    print(f"[INFO] 🧹 Suppression de {before - after} doublon(s) exact(s) après fusion", flush=True)
+
     fusion.to_excel(out, index=False)
     print(f"[DEBUG] 📄 Fichier Excel sauvegardé : {out}", flush=True)
     print(f"[DEBUG] 📏 Shape du DataFrame fusionné : {fusion.shape}", flush=True)

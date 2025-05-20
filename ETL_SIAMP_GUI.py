@@ -409,10 +409,25 @@ class MainWindow(QMainWindow):
                 "MONTH", "SIAMP UNIT", "SALE TYPE", "TYPE OF CANAL", "ENSEIGNE", "CUSTOMER NAME",
                 "COMMERCIAL AREA", "SUR FAMILLE", "FAMILLE", "REFERENCE", "PRODUCT NAME",
                 "QUANTITY", "TURNOVER", "CURRENCY", "COUNTRY", "C.A en €",
-                "VARIABLE COSTS", "COGS", "VAR Margin", "Margin", "NOMFICHIER", "FEUILLE"
+                "VARIABLE COSTS", "COGS", "VAR Margin", "Margin", "SOURCE", "NOMFICHIER", "FEUILLE"
             ]
             fusion = fusion[[c for c in ORDER if c in fusion.columns] +
                             [c for c in fusion.columns if c not in ORDER]]
+            
+            # ➤ Réorganisation des colonnes dans l’ordre métier
+            fusion = fusion[[c for c in ORDER if c in fusion.columns]
+                            + [c for c in fusion.columns if c not in ORDER]]
+
+            # ➤ Supprimer les doublons métier APRÈS enrichissement
+            colonnes_cle = ["MONTH", "REFERENCE", "CUSTOMER NAME", "QUANTITY"]
+            before = fusion.shape[0]
+            fusion = fusion.drop_duplicates(subset=colonnes_cle, keep="last")
+            after = fusion.shape[0]
+            print(f"[INFO] 🧹 {before - after} doublon(s) supprimé(s) après enrichissements", flush=True)
+
+            # ➤ Sauvegarde Excel
+            fusion.to_excel(out, index=False)
+
 
             # Sauvegarder en Excel
             fusion.to_excel(out, index=False)
