@@ -13,3 +13,6 @@ node_modules/
 build/
 package-lock.json
 package.json
+
+build.bat
+error_log.txt
