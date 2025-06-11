@@ -37,7 +37,7 @@ from PyQt6.QtGui    import QIcon, QAction, QKeySequence, QPainter, QFont, QColor
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QFileDialog, QMessageBox, QListWidget, QComboBox,
-    QPlainTextEdit, QProgressBar, QDateEdit, QInputDialog
+    QPlainTextEdit, QProgressBar, QDateEdit, QInputDialog, QFrame
 )
 
 SCRIPT_CORE = "ETL_SIAMP.py"
@@ -134,6 +134,63 @@ class DropListWidget(QListWidget):
     def files(self) -> List[str]:
         return [self.item(i).text() for i in range(self.count())]
 
+class ColumnStatusBar(QFrame):
+    """Bandeau affichant le statut de détection des colonnes."""
+    
+    def __init__(self, expected_columns, parent=None):
+        super().__init__(parent)
+        self.expected_columns = expected_columns
+        self.column_labels = {}
+        self.setFrameStyle(QFrame.Shape.Panel | QFrame.Shadow.Sunken)
+        
+        # Layout horizontal avec scrolling si nécessaire
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
+        
+        # Création des labels pour chaque colonne
+        for col in expected_columns:
+            label = QLabel(col)
+            label.setFixedHeight(20)  # Plus petit
+            label.setMaximumWidth(110)  # Largeur max, à ajuster selon ton UI
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setWordWrap(False)
+            label.setStyleSheet("""
+                background-color: #3D444C;
+                color: #AAAAAA; 
+                border-radius: 4px;
+                padding: 1px 6px;
+                margin: 1px;
+                font-size: 9pt;
+            """)
+            self.column_labels[col] = label
+            layout.addWidget(label)
+
+    def update_status_interactive(self, presence, all_files):
+        for col, label in self.column_labels.items():
+            files_with = presence.get(col, set())
+            missing = [os.path.basename(f) for f in all_files if f not in files_with]
+            if len(files_with) == len(all_files) and all_files:
+                # Vert : présent partout
+                label.setStyleSheet("background-color: #297F4F; color: white; border-radius: 4px; font-weight: bold; font-size:9pt;")
+                label.setToolTip("Présent dans tous les fichiers")
+                label.mousePressEvent = None
+            elif len(files_with) == 0:
+                # Rouge : absent partout
+                label.setStyleSheet("background-color: #B22222; color: white; border-radius: 4px; font-weight: bold; font-size:9pt;")
+                if missing:
+                    label.setToolTip("Absent de tous les fichiers :\n" + "\n".join(missing))
+                else:
+                    label.setToolTip("Absent de tous les fichiers")
+                label.mousePressEvent = None
+            else:
+                # Orange : partiel
+                label.setStyleSheet("background-color: #FFA500; color: black; border-radius: 4px; font-weight: bold; font-size:9pt;")
+                if missing:
+                    label.setToolTip("Manquant dans :\n" + "\n".join(missing))
+                else:
+                    label.setToolTip("Présent partiellement")
+                label.mousePressEvent = None  # On n'a plus besoin du clic
 
 
 # ---------------------------------------------------------------- MainWindow
@@ -150,7 +207,8 @@ class MainWindow(QMainWindow):
         from collections import defaultdict
         from PyQt6.QtWidgets import QDialog, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QPushButton
 
-        mois_detectés = defaultdict(list)
+        # Structure hiérarchique pour stocker année > mois > jour
+        dates_hierarchie = defaultdict(lambda: defaultdict(set))
         files = self.lst_files.files()
 
         if not files:
@@ -165,14 +223,15 @@ class MainWindow(QMainWindow):
                     df = xls.parse(sh, usecols="A:Q")
                     df.columns = [c.strip().upper() for c in df.columns]
                     if "MONTH" in df.columns:
-                        mois = pd.to_datetime(df["MONTH"], errors="coerce").dt.to_period("M")
-                        mois_uniques = sorted(mois.dropna().unique())
-                        for m in mois_uniques:
-                            mois_detectés[str(m)].append(os.path.basename(path))
+                        # Conversion robuste en dates
+                        dates = pd.to_datetime(df["MONTH"], errors="coerce")
+                        # Pour chaque date valide, extraire année/mois/jour
+                        for date in dates.dropna():
+                            dates_hierarchie[date.year][date.month].add(date.day)
             except Exception as e:
                 self.txt_log.appendPlainText(f"[WARN] ⚠ Fichier ignoré : {path} – {e}")
 
-        if not mois_detectés:
+        if not dates_hierarchie:
             QMessageBox.information(self, "Info", "Aucune date détectée dans les fichiers.")
             return
 
@@ -186,33 +245,27 @@ class MainWindow(QMainWindow):
         tree.setSelectionMode(QTreeWidget.SelectionMode.MultiSelection)
         tree.setExpandsOnDoubleClick(True)
 
-        # ➤ Construction de l'arborescence années/mois
-        dates_groupées = defaultdict(set)
-        for period in mois_detectés:
-            annee, mois = period.split("-")
-            dates_groupées[annee].add(mois)
-
-        for annee, mois_set in sorted(dates_groupées.items()):
-            parent = QTreeWidgetItem([annee])
+        # ➤ Construction de l'arborescence depuis notre hiérarchie
+        for annee in sorted(dates_hierarchie.keys()):
+            parent = QTreeWidgetItem([str(annee)])
             parent.setFlags(parent.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             parent.setCheckState(0, Qt.CheckState.Checked)
-            for mois in sorted(mois_set):
-                mois_int = int(mois)
-                mois_nom = calendar.month_name[mois_int].capitalize()  # → "Février"
+            
+            for mois_num in sorted(dates_hierarchie[annee].keys()):
+                mois_nom = calendar.month_name[mois_num].capitalize()
                 child = QTreeWidgetItem([mois_nom])
                 child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 child.setCheckState(0, Qt.CheckState.Checked)
-                # ➡️ Important : stocker la vraie valeur numérique (ex. : "02") dans les "data"
-                child.setData(0, Qt.ItemDataRole.UserRole, f"{int(mois):02d}")
+                # Stocke le numéro du mois formaté avec leading zero
+                child.setData(0, Qt.ItemDataRole.UserRole, f"{mois_num:02d}")
                 parent.addChild(child)
+            
             tree.addTopLevelItem(parent)
 
         layout.addWidget(tree)
-
         btn_ok = QPushButton("Valider")
         btn_ok.clicked.connect(dialog.accept)
         layout.addWidget(btn_ok)
-
         dialog.exec()
 
         # ➤ Extraire les dates cochées
@@ -223,10 +276,10 @@ class MainWindow(QMainWindow):
             for j in range(parent.childCount()):
                 child = parent.child(j)
                 if child.checkState(0) == Qt.CheckState.Checked:
-                    mois = child.data(0, Qt.ItemDataRole.UserRole)  # utilise le "data" plutôt que le texte affiché
+                    mois = child.data(0, Qt.ItemDataRole.UserRole)
                     dates_choisies.append(f"{annee}-{mois}")
         
-        self.mois_selectionnes = dates_choisies  # Stocke la sélection pour l'utiliser dans _run_etl
+        self.mois_selectionnes = dates_choisies
         self.txt_log.appendPlainText(f"✅ Mois choisis : {self.mois_selectionnes}")
 
     def _build_tabs(self):
@@ -295,6 +348,21 @@ class MainWindow(QMainWindow):
         self.txt_log_historique.setReadOnly(True)
         self.txt_log_historique.setMaximumBlockCount(1000)
         layout.addWidget(self.txt_log_historique, stretch=2)
+
+        # Bandeau des colonnes historiques
+        layout.addWidget(QLabel("<b>Colonnes attendues (historique) :</b>"))
+        expected_histo_columns = [
+            "MONTH", "SIAMP UNIT", "SALE TYPE", "TYPE OF CANAL", "CUSTOMER NAME", "COMMERCIAL AREA",
+            "SUR FAMILLE", "FAMILLE", "REFERENCE", "PRODUCT NAME", "QUANTITY", "TURNOVER", "CURRENCY",
+            "COUNTRY", "C.A en €", "VARIABLE COSTS", "COGS", "VAR Margin", "Margin",
+            "NOMFICHIER", "FEUILLE", "Enseigne ret", "Surfamille"
+        ]
+        self.histo_column_status_bar = ColumnStatusBar(expected_histo_columns)
+        layout.addWidget(self.histo_column_status_bar)
+
+        btn_check_histo = QPushButton("Vérifier le contenu")
+        btn_check_histo.clicked.connect(self._check_histo_columns_in_files)
+        layout.addWidget(btn_check_histo)
 
     def _add_historique_files(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Sélectionner fichiers historiques", "", "Excel (*.xlsx)")
@@ -464,11 +532,16 @@ class MainWindow(QMainWindow):
                     for cell in ws[col_letter][1:]:  # Skip header
                         if cell.value:
                             try:
-                                # Convertir en date Excel
-                                date_val = pd.to_datetime(cell.value, format="%d/%m/%Y")
-                                cell.value = date_val
-                                cell.number_format = "dd/mm/yyyy"
-                            except:
+                                if isinstance(cell.value, (datetime, pd.Timestamp)):
+                                    # Déjà en datetime, appliquer juste le format
+                                    cell.number_format = "dd/mm/yyyy"
+                                else:
+                                    # Convertir en datetime Excel
+                                    date_val = pd.to_datetime(cell.value, errors="coerce")
+                                    if pd.notna(date_val):
+                                        cell.value = date_val
+                                        cell.number_format = "dd/mm/yyyy"
+                            except Exception:
                                 pass
 
                 # Formater uniquement la colonne "TURNOVER €" avec le symbole €
@@ -513,12 +586,46 @@ class MainWindow(QMainWindow):
             import traceback
             traceback.print_exc()
 
+    def _check_histo_columns_in_files(self):
+        files = self.lst_historique_files.files()
+        expected = self.histo_column_status_bar.expected_columns
+        presence = {col: set() for col in expected}
+        for path in files:
+            try:
+                xls = pd.ExcelFile(path, engine="openpyxl")
+                for sh in xls.sheet_names:
+                    df = pd.read_excel(path, sheet_name=sh, nrows=0)
+                    cols = [c.strip().upper() for c in df.columns]
+                    for col in expected:
+                        if col in cols:
+                            presence[col].add(path)
+            except Exception as e:
+                self.txt_log_historique.appendPlainText(f"[WARN] ⚠ Fichier ignoré dans la détection : {path} – {e}")
+        self.histo_column_status_bar.update_status_interactive(presence, files)
+
     # ---------- UI construction ----------
     def _build_traitement_ui(self, parent_widget):
         layout = QVBoxLayout(parent_widget)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
-
+        
+        # Colonnes attendues
+        expected_columns = [
+            "MONTH", "SIAMP UNIT", "SALE TYPE", "TYPE OF CANAL", "ENSEIGNE", 
+            "CUSTOMER NAME", "COMMERCIAL AREA", "SUR FAMILLE", "FAMILLE", 
+            "REFERENCE", "PRODUCT NAME", "QUANTITY", "TURNOVER", 
+            "CURRENCY", "COUNTRY", "VARIABLE COSTS", "COGS"
+        ]
+        
+        # Bandeau des colonnes
+        layout.addWidget(QLabel("<b>Colonnes attendues :</b>"))
+        self.column_status_bar = ColumnStatusBar(expected_columns)
+        layout.addWidget(self.column_status_bar)
+        
+        btn_check = QPushButton("Vérifier le contenu")
+        btn_check.clicked.connect(self._check_columns_in_files)
+        layout.addWidget(btn_check)
+        
         # ► Sélecteur de date + bouton Charger taux
         row_date = QHBoxLayout()
         row_date.addWidget(QLabel("Date des taux :"))
@@ -800,6 +907,11 @@ class MainWindow(QMainWindow):
             'zone_affectation': self.txt_zone_affectation.text(),
             'table': self.txt_table_file.text()
         }
+        
+        # Créer le répertoire mydata s'il n'existe pas
+        config_dir = os.path.dirname(CONFIG_REF_FILE)
+        os.makedirs(config_dir, exist_ok=True)
+        
         with open(CONFIG_REF_FILE, 'w') as cfgfile:
             config.write(cfgfile)
         QMessageBox.information(self, "Succès", "Les chemins des fichiers de référence ont été sauvegardés.")
@@ -852,6 +964,23 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Erreur", f"Impossible d'ouvrir le fichier :\n{e}")
 
+    def _check_columns_in_files(self):
+        files = self.lst_files.files()
+        expected = self.column_status_bar.expected_columns
+        # Dictionnaire : colonne -> set des fichiers où elle est présente
+        presence = {col: set() for col in expected}
+        for path in files:
+            try:
+                xls = pd.ExcelFile(path, engine="openpyxl")
+                for sh in xls.sheet_names:
+                    df = pd.read_excel(path, sheet_name=sh, nrows=0)
+                    cols = [c.strip().upper() for c in df.columns]
+                    for col in expected:
+                        if col in cols:
+                            presence[col].add(path)
+            except Exception as e:
+                self.txt_log.appendPlainText(f"[WARN] ⚠ Fichier ignoré dans la détection : {path} – {e}")
+        self.column_status_bar.update_status_interactive(presence, files)
 
 
 # --------------------------------------------------
@@ -864,3 +993,52 @@ if __name__ == "__main__":
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
+
+def normalize_columns(df):
+    normalized_columns = df.columns.copy()
+    for standard_name, variations in COLUMN_MAPPING.items():
+        for col in df.columns:
+            if col.strip().upper() in [v.strip().upper() for v in variations]:
+                normalized_columns = normalized_columns.str.replace(col, standard_name)
+    df.columns = normalized_columns
+    return df
+
+def clean_and_validate_data(df):
+    # Conversion des dates
+    if "MONTH" in df.columns:
+        df["MONTH"] = pd.to_datetime(df["MONTH"], errors="coerce")
+    
+    # Nettoyage des valeurs numériques
+    numeric_columns = ["TURNOVER", "QUANTITY"]
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    
+    # Standardisation des devises
+    if "CURRENCY" in df.columns:
+        df["CURRENCY"] = df["CURRENCY"].str.strip().str.upper()
+    
+    return df
+
+def identify_merge_keys(df):
+    potential_keys = ["REFERENCE", "CUSTOMER NAME", "MONTH"]
+    available_keys = [key for key in potential_keys if key in df.columns]
+    return available_keys
+
+def format_month_column(df, year=None):
+    """Formate correctement la colonne MONTH en gérant différents formats."""
+    if "MONTH" not in df.columns:
+        return df
+
+    # Si valeurs entre 1-12 et année fournie => convertir en date complète
+    numeric_months = pd.to_numeric(df["MONTH"], errors="coerce")
+    month_mask = numeric_months.between(1, 12)
+    if year and month_mask.any():
+        df.loc[month_mask, "MONTH"] = pd.to_datetime(
+            [f"{year}-{int(m):02d}-01" for m in numeric_months[month_mask]]
+        )
+
+    # Essai de conversion complète en date
+    df["MONTH"] = pd.to_datetime(df["MONTH"], errors="coerce", dayfirst=True)
+    
+    return df

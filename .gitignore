@@ -2,6 +2,9 @@
 .venv/
 __pycache__/
 *.pyc
+*.xlsx
+*.pkl
+
 
 # Dossiers générés
 output/
@@ -14,5 +17,12 @@ build/
 package-lock.json
 package.json
 
+
+#Nouvelle structuration du projet 
+
+ETL_SIAMP/
+
 build.bat
-error_log.txt
+cache_manager.py
+test_fusion_historique.py
+verify_output.py

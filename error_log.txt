@@ -1,2 +1,33 @@
 C:\Users\elias\OneDrive\Documents\PROFESSIONNEL\SIAMP\SUJETS\SUJET - 1 (Gestion C.A filiales)\Dev\ETL_SIAMP.py:408: FutureWarning: DataFrame.applymap has been deprecated. Use DataFrame.map instead.
   return df.applymap(
+Traceback (most recent call last):
+  File "C:\Users\elias\OneDrive\Documents\PROFESSIONNEL\SIAMP\SUJETS\SUJET - 1 (Gestion C.A filiales)\Dev\ETL_SIAMP.py", line 309, in main
+    zone_affectation_df = pd.read_excel(
+                          ^^^^^^^^^^^^^^
+  File "C:\Users\elias\OneDrive\Documents\PROFESSIONNEL\SIAMP\SUJETS\SUJET - 1 (Gestion C.A filiales)\Dev\.venv\Lib\site-packages\pandas\io\excel\_base.py", line 495, in read_excel
+    io = ExcelFile(
+         ^^^^^^^^^^
+  File "C:\Users\elias\OneDrive\Documents\PROFESSIONNEL\SIAMP\SUJETS\SUJET - 1 (Gestion C.A filiales)\Dev\.venv\Lib\site-packages\pandas\io\excel\_base.py", line 1567, in __init__
+    self._reader = self._engines[engine](
+                   ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\elias\OneDrive\Documents\PROFESSIONNEL\SIAMP\SUJETS\SUJET - 1 (Gestion C.A filiales)\Dev\.venv\Lib\site-packages\pandas\io\excel\_openpyxl.py", line 553, in __init__
+    super().__init__(
+  File "C:\Users\elias\OneDrive\Documents\PROFESSIONNEL\SIAMP\SUJETS\SUJET - 1 (Gestion C.A filiales)\Dev\.venv\Lib\site-packages\pandas\io\excel\_base.py", line 563, in __init__
+    self.handles = get_handle(
+                   ^^^^^^^^^^^
+  File "C:\Users\elias\OneDrive\Documents\PROFESSIONNEL\SIAMP\SUJETS\SUJET - 1 (Gestion C.A filiales)\Dev\.venv\Lib\site-packages\pandas\io\common.py", line 728, in get_handle
+    ioargs = _get_filepath_or_buffer(
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\elias\OneDrive\Documents\PROFESSIONNEL\SIAMP\SUJETS\SUJET - 1 (Gestion C.A filiales)\Dev\.venv\Lib\site-packages\pandas\io\common.py", line 472, in _get_filepath_or_buffer
+    raise ValueError(msg)
+ValueError: Invalid file path or buffer object type: <class 'NoneType'>
+Traceback (most recent call last):
+  File "C:\Users\elias\OneDrive\Documents\PROFESSIONNEL\SIAMP\SUJETS\SUJET - 1 (Gestion C.A filiales)\Dev\ETL_SIAMP.py", line 335, in main
+    table_df.iloc[:, 14] = table_df.iloc[:, 14].astype(str).str.strip()  # colonne O
+                           ^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'iloc'
+Traceback (most recent call last):
+  File "C:\Users\elias\OneDrive\Documents\PROFESSIONNEL\SIAMP\SUJETS\SUJET - 1 (Gestion C.A filiales)\Dev\ETL_SIAMP.py", line 368, in main
+    table_df["concat_key"] = table_df.iloc[:, 21].astype(str).str.strip()  # colonne V dans table
+                             ^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'iloc'
