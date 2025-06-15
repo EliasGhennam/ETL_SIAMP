@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['siamp_icon.ico'],
+    icon=['mydata/siamp_icon.ico'],
 )

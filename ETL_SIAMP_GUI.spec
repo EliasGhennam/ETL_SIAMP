@@ -5,8 +5,8 @@ a = Analysis(
     ['ETL_SIAMP_GUI.py'],
     pathex=[],
     binaries=[],
-    datas=[('ETL_SIAMP.py', '.')],
-    hiddenimports=[],
+    datas=[('ETL_SIAMP.py', '.'), ('mydata/*', 'mydata/')],
+    hiddenimports=['pandas', 'openpyxl', 'numpy', 'xml.etree.ElementTree', 'configparser'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['siamp_icon.ico'],
+    icon=['mydata\\siamp_icon.ico'],
 )

@@ -2,27 +2,76 @@
 .venv/
 __pycache__/
 *.pyc
-*.xlsx
-*.pkl
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+bin/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+venv/
+ENV/
 
+# Fichiers de données et caches
+*.xlsx
+*.xls
+*.pkl
+*.cache
+*.log
+error_log.txt
+nuitka-crash-report.xml
+cache_historique.pkl
+Historique_Consolide.xlsx
+fusion.xlsx
+fusion_historique_test.xlsx
 
 # Dossiers générés
 output/
 fichiers_excel/
 dist/
+ETL_SIAMP_GUI.dist/
+ETL_SIAMP_GUI.build/
+build_etl/
+mydata/
 
-# Si projet Node accidentellement ajouté
+# Fichiers Node.js
 node_modules/
-build/
 package-lock.json
 package.json
 
-
-#Nouvelle structuration du projet 
-
-ETL_SIAMP/
-
+# Fichiers de build et configuration
+*.spec
 build.bat
+build_etl.bat
+update.bat
+ETL_SIAMP_EXE_CREATOR_V2.spec
+ETL_SIAMP_GUI_DEBUG.spec
+MonProgrammeETL.spec
+
+# Fichiers de test et utilitaires
 cache_manager.py
 test_fusion_historique.py
 verify_output.py
+EXE_CREATOR_OG.py
+ETL_SIAMP_EXE_CREATOR_V2.py
+
+# IDE et éditeurs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Système
+.DS_Store
+Thumbs.db

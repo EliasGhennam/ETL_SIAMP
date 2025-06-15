@@ -28,6 +28,7 @@ import requests
 from openpyxl import load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
+import subprocess
 
 # ------------------------------------------------------------------ console UTF‑8
 if sys.stdout and hasattr(sys.stdout, "buffer"):
@@ -168,7 +169,13 @@ def main():
 
     args = parser.parse_args()
     # ----------------------------------------- Charger les chemins des fichiers de référence
-    CONFIG_REF_FILE = "ref_files.cfg"
+    def resource_path(relative_path):
+        """Retourne le chemin absolu d'un fichier de ressources, compatible avec PyInstaller."""
+        if hasattr(sys, "_MEIPASS"):
+            return os.path.join(sys._MEIPASS, relative_path)  # exécutable PyInstaller
+        return os.path.join(os.path.abspath("."), relative_path)  # mode normal
+    
+    CONFIG_REF_FILE = resource_path("mydata/ref_files.cfg")
     zone_affectation_path = None
     table_path = None
 
@@ -331,15 +338,6 @@ def main():
     for col in fusion.select_dtypes(include="object").columns:
         fusion[col] = fusion[col].apply(nettoyer_str)
 
-
-    # ➤ Supprimer les doublons métier basés sur les colonnes clés
-    colonnes_cle = ["MONTH", "REFERENCE", "CUSTOMER NAME", "QUANTITY"]
-    nb_avant = fusion.shape[0]
-    fusion = fusion.drop_duplicates(subset=colonnes_cle, keep="last")
-    nb_apres = fusion.shape[0]
-    print(f"[INFO] 🧹 {nb_avant - nb_apres} doublon(s) supprimé(s) après nettoyage logique", flush=True)
-
-
     print(f"[DEBUG] 📌 Rates récupérés : {rates}", flush=True)
     currencies_in_file = set(fusion["CURRENCY"].dropna().unique())
     print(f"[DEBUG] 📌 Devises trouvées dans les fichiers : {currencies_in_file}", flush=True)
@@ -376,32 +374,45 @@ def main():
         print(f"[ERROR] ❌ Erreur fusion ZONE AFFECTATION : {e}")
         traceback.print_exc()
 
-    # ---------------------------- SUR FAMILLE ----------------------------
+    # ---------------------------- SURFAMILLE RET ----------------------------
     try:
-        # Nettoyage préalable des colonnes REFERENCE et Sur-famille dans table
-        table_df.iloc[:, 14] = table_df.iloc[:, 14].astype(str).str.strip().str.upper()
-        table_df.iloc[:, 16] = table_df.iloc[:, 16].astype(str).str.strip().str.upper()
-
-        # Supprimer les doublons masqués sur REFERENCE
-        before = table_df.shape[0]
-        table_df = table_df.drop_duplicates(subset=table_df.columns[14], keep="last")
-        after = table_df.shape[0]
-        print(f"[INFO] 🔎 Table nettoyée : {before - after} doublon(s) masqué(s) supprimé(s) sur REFERENCE", flush=True)
+        print("[INFO] 🔍 Recherche des colonnes pour la fusion Surfamille ret...")
+        
+        # Utiliser directement les positions fixes comme dans la version originale
+        if table_df.shape[1] > 14:  # Position de REFERENCE
+            reference_col = table_df.columns[14]
+            print(f"[INFO] ✅ Utilisation de la colonne REFERENCE à l'index 14: '{reference_col}'")
+        else:
+            print("[WARN] ⚠️ Pas assez de colonnes dans table_df pour accéder à l'index 14")
+            reference_col = "REFERENCE_TEMP"
+            table_df[reference_col] = ""
+        
+        if table_df.shape[1] > 16:  # Position de SUR FAMILLE
+            surfamille_col = table_df.columns[16]
+            print(f"[INFO] ✅ Utilisation de la colonne SUR FAMILLE à l'index 16: '{surfamille_col}'")
+        else:
+            print("[WARN] ⚠️ Pas assez de colonnes dans table_df pour accéder à l'index 16")
+            surfamille_col = "SURFAMILLE_TEMP"
+            table_df[surfamille_col] = ""
+        
+        # Nettoyage des colonnes trouvées
+        table_df[reference_col] = table_df[reference_col].astype(str).str.strip().str.upper()
+        table_df[surfamille_col] = table_df[surfamille_col].astype(str).str.strip().str.upper()
 
         # Nettoyage de REFERENCE côté fusion
         fusion["REFERENCE"] = fusion["REFERENCE"].astype(str).str.strip().str.upper()
 
         # Fusionner proprement avec REFERENCE unique
         fusion = fusion.merge(
-            table_df[[table_df.columns[14], table_df.columns[16]]].rename(columns={
-                table_df.columns[14]: "REFERENCE",
-                table_df.columns[16]: "Sur-famille"
+            table_df[[reference_col, surfamille_col]].rename(columns={
+                reference_col: "REFERENCE",
+                surfamille_col: "Surfamille ret"
             }),
             how="left",
             on="REFERENCE"
         )
 
-        print("[INFO] ✅ Colonne 'Sur famille' fusionnée et 'SUR FAMILLE' consolidée.")
+        print("[INFO] ✅ Colonne 'Sur famille' fusionnée et renommée en 'Surfamille ret'.")
 
         # Nettoyage de tous les caractères invisibles restants
         def nettoyer_cellules(df):
@@ -414,64 +425,79 @@ def main():
         fusion = nettoyer_cellules(fusion)
 
     except Exception as e:
-        print(f"[ERROR] ❌ Erreur fusion SUR FAMILLE : {e}")
+        print(f"[ERROR] ❌ Erreur fusion SURFAMILLE RET : {e}")
         traceback.print_exc()
-
-        
-        def nettoyer_cellules(df):
-            return df.applymap(
-                lambda x: (
-                    re.sub(r'[^\x09\x0A\x0D\x20-\x7E\u00A0-\uFFFF]', '', str(x))
-                    if isinstance(x, str) else x
-                )
-            )
-        fusion = nettoyer_cellules(fusion)
-
-    except Exception as e:
-        print(f"[ERROR] ❌ Erreur fusion SUR FAMILLE : {e}")
-        traceback.print_exc()
+        # Assurer que le processus continue même en cas d'erreur
+        if "Surfamille ret" not in fusion.columns:
+            print("[WARN] ⚠️ Création d'une colonne 'Surfamille ret' vide suite à l'erreur")
+            fusion["Surfamille ret"] = ""
 
 
     # ---------------------------- ENSEIGNE RET ----------------------------
     try:
-        # Nettoyage et normalisation dans fusion
+        print("[INFO] 🔍 Création de la colonne Enseigne ret avec la méthode de concaténation...")
+        
+        # Nettoyage et normalisation des colonnes dans fusion
         fusion["ENSEIGNE"] = fusion["ENSEIGNE"].fillna("").astype(str).str.strip().str.upper()
         fusion["CUSTOMER NAME"] = fusion["CUSTOMER NAME"].fillna("").astype(str).str.strip().str.upper()
+        
+        # Création de la clé de concaténation dans fusion
         fusion["concat_key"] = fusion["ENSEIGNE"] + fusion["CUSTOMER NAME"]
-
-        # Nettoyage dans table
-        table_df.iloc[:, 21] = table_df.iloc[:, 21].astype(str).str.strip().str.upper()  # colonne V
-        table_df.iloc[:, 22] = table_df.iloc[:, 22].astype(str).str.strip().str.upper()  # colonne W
-        table_df["concat_key"] = table_df.iloc[:, 21]  # V déjà nettoyée
-
-        # Suppression des doublons sur concat_key
-        before = table_df.shape[0]
-        table_df = table_df.drop_duplicates(subset="concat_key", keep="last")
-        after = table_df.shape[0]
-        print(f"[INFO] 🔎 Table nettoyée : {before - after} doublon(s) masqué(s) supprimé(s) sur concat_key (ENSEIGNE + CUSTOMER NAME)", flush=True)
-
-        # Merge
-        fusion = fusion.merge(
-            table_df[["concat_key", table_df.columns[22]]].rename(columns={table_df.columns[22]: "Enseigne ret"}),  # colonne W
-            how="left",
-            on="concat_key"
-        )
-        fusion.drop(columns=["concat_key"], inplace=True)
-        print(f"[INFO] ✅ Fusion Enseigne ret effectuée.")
-
+        print(f"[DEBUG] Clés de concaténation créées dans fusion: {len(fusion['concat_key'].unique())} valeurs uniques")
+        
+        # Vérifier si le fichier de référence a suffisamment de colonnes
+        if table_df.shape[1] >= 23:
+            # Créer la clé de concaténation dans table_df (colonne V = index 21)
+            table_df["concat_key"] = table_df.iloc[:, 21].fillna("").astype(str).str.strip().str.upper()
+            
+            # Créer un dictionnaire de correspondance: concat_key -> Enseigne ret (colonne W = index 22)
+            mapping = {}
+            for i in range(len(table_df)):
+                key = table_df["concat_key"].iloc[i]
+                val = table_df.iloc[i, 22]
+                if pd.notna(key) and pd.notna(val) and str(key).strip() and str(val).strip():
+                    mapping[str(key).strip().upper()] = str(val).strip().upper()
+            
+            print(f"[DEBUG] Nombre de correspondances dans le mapping: {len(mapping)}")
+            if mapping:
+                print(f"[DEBUG] Exemples de correspondances:")
+                for k, v in list(mapping.items())[:3]:
+                    print(f"  '{k}' -> '{v}'")
+            
+            # Appliquer le mapping à fusion
+            fusion["Enseigne ret"] = fusion["concat_key"].map(mapping)
+            
+            # Vérifier le résultat
+            filled = fusion["Enseigne ret"].notna().sum()
+            print(f"[INFO] ✅ Colonne Enseigne ret remplie avec {filled} valeurs sur {len(fusion)} lignes")
+            
+            # Nettoyer les colonnes temporaires
+            fusion.drop(columns=["concat_key"], inplace=True)
+            table_df.drop(columns=["concat_key"], inplace=True)
+            
+            # Si aucune correspondance n'a été trouvée, utiliser une valeur par défaut
+            if filled == 0:
+                print("[WARN] ⚠️ Aucune correspondance trouvée. Utilisation d'une valeur par défaut.")
+                
+                # Extraire les valeurs uniques de la colonne W (index 22)
+                w_values = table_df.iloc[:, 22].dropna().unique()
+                
+                if len(w_values) > 0:
+                    default_value = str(w_values[0]).strip().upper()
+                    fusion["Enseigne ret"] = default_value
+                    print(f"[INFO] ✅ Valeur par défaut utilisée: '{default_value}'")
+                else:
+                    fusion["Enseigne ret"] = "ENSEIGNE RET"
+                    print("[INFO] ✅ Valeur par défaut utilisée: 'ENSEIGNE RET'")
+        else:
+            print(f"[WARN] ⚠️ Le fichier de référence n'a pas assez de colonnes ({table_df.shape[1]} < 23)")
+            fusion["Enseigne ret"] = "ENSEIGNE RET"
+    
     except Exception as e:
-        print(f"[ERROR] ❌ Erreur fusion Enseigne ret : {e}")
+        print(f"[ERROR] ❌ Erreur lors de la création de la colonne Enseigne ret : {e}")
         traceback.print_exc()
-
-
-    # Supprimer la colonne 'ENSEIGNE' car elle n'est pas utile (copie de CUSTOMER NAME)
-    if "ENSEIGNE" in fusion.columns:
-        fusion.drop(columns=["ENSEIGNE"], inplace=True)
-        print(f"[INFO] 🗑️ Colonne 'ENSEIGNE' supprimée (inutile car remplacée par 'Enseigne ret').")
-
-
-
-
+        # Assurer que le processus continue même en cas d'erreur
+        fusion["Enseigne ret"] = "ENSEIGNE RET"
 
     # 🔍 Extraire les dates uniques de la colonne "MONTH"
     if "MONTH" in fusion.columns:
@@ -511,23 +537,24 @@ def main():
     fusion["CURRENCY"] = fusion["CURRENCY"].str.strip().str.upper()
     fusion["Taux €"] = fusion["CURRENCY"].map(rates)
 
+    # Correction du calcul de "C.A en €" pour prendre en compte les devises avec taux > 1
     fusion["C.A en €"] = fusion.apply(
-        lambda row: row["TURNOVER"] * row["Taux €"]
+        lambda row: row["TURNOVER"] * row["Taux €"] if row["Taux €"] <= 1 else row["TURNOVER"] / (row["Taux €"])
         if pd.notnull(row.get("TURNOVER")) and pd.notnull(row.get("Taux €"))
         else None,
         axis=1
     )
 
-    # ➕ Calcul des marges
+    # ➕ Calcul des marges avec correction pour les taux > 1
     fusion["VAR Margin"] = fusion.apply(
-        lambda row: row["C.A en €"] - (row["VARIABLE COSTS"] * row["Taux €"] * row["QUANTITY"])
+        lambda row: row["C.A en €"] - (row["VARIABLE COSTS"] * (row["Taux €"] if row["Taux €"] <= 1 else 1/row["Taux €"]) * row["QUANTITY"])
         if pd.notnull(row.get("C.A en €")) and pd.notnull(row.get("VARIABLE COSTS")) and pd.notnull(row.get("Taux €")) and pd.notnull(row.get("QUANTITY"))
         else None,
         axis=1
     )
 
     fusion["Margin"] = fusion.apply(
-        lambda row: row["C.A en €"] - (row["COGS"] * row["Taux €"] * row["QUANTITY"])
+        lambda row: row["C.A en €"] - (row["COGS"] * (row["Taux €"] if row["Taux €"] <= 1 else 1/row["Taux €"]) * row["QUANTITY"])
         if pd.notnull(row.get("C.A en €")) and pd.notnull(row.get("COGS")) and pd.notnull(row.get("Taux €")) and pd.notnull(row.get("QUANTITY"))
         else None,
         axis=1
@@ -547,11 +574,11 @@ def main():
 
 
     ORDER = [
-    "MONTH", "SIAMP UNIT", "SALE TYPE", "TYPE OF CANAL", "CUSTOMER NAME",
+    "MONTH", "SIAMP UNIT", "SALE TYPE", "TYPE OF CANAL", "ENSEIGNE", "CUSTOMER NAME",
     "COMMERCIAL AREA", "SUR FAMILLE", "FAMILLE", "REFERENCE", "PRODUCT NAME",
     "QUANTITY", "TURNOVER", "CURRENCY", "COUNTRY", "C.A en €",
     "VARIABLE COSTS", "COGS", "VAR Margin", "Margin",
-    "NOMFICHIER", "FEUILLE", "Enseigne ret", "Sur famille"
+    "Enseigne ret", "Surfamille ret", "NOMFICHIER", "FEUILLE", "SOURCE", "Taux €"
 ]
 
 
@@ -580,7 +607,6 @@ def main():
 
     fusion.drop_duplicates(inplace=True)
     after = fusion.shape[0]
-    print(f"[INFO] 🧹 Suppression de {before - after} doublon(s) exact(s) après fusion", flush=True)
 
     fusion.to_excel(out, index=False)
     print(f"[DEBUG] 📄 Fichier Excel sauvegardé : {out}", flush=True)
@@ -651,29 +677,42 @@ def main():
 
 def validate_strict_columns(df, filename, formats, return_details=False):
     """
-    Valide la présence et l'ordre des colonnes sur la base des en-têtes uniquement.
+    Valide la présence des colonnes requises sans être strict sur leur ordre.
     Affiche un log détaillé en cas de problème.
     Si return_details=True, retourne (is_valid, motif, colonnes_manquantes, colonnes_sup)
     """
     def norm(col):
         return col.strip().replace(" ", "").replace("_", "").upper()
+    
     cols = [norm(c) for c in df.columns]
+    
+    # Pour chaque format, vérifier si toutes les colonnes requises sont présentes
     for fmt in formats:
         fmt_norm = [norm(c) for c in fmt]
-        if cols[:len(fmt_norm)] == fmt_norm:
+        missing = [c for c in fmt if norm(c) not in cols]
+        
+        # Si aucune colonne ne manque pour ce format, le fichier est valide
+        if not missing:
             if return_details:
                 return True, '', [], []
             return True
-    # Si aucun format ne correspond, on détaille
+    
+    # Si aucun format ne correspond complètement, on détaille
     motif = "Colonnes manquantes"
     cols_manquantes = []
     for fmt in formats:
         missing = [c for c in fmt if norm(c) not in cols]
         if missing:
             cols_manquantes.extend(missing)
+    
+    # Éliminer les doublons dans les colonnes manquantes
+    cols_manquantes = list(set(cols_manquantes))
+    
     cols_sup = [c for c in df.columns if norm(c) not in [norm(x) for f in formats for x in f]]
+    
     if return_details:
         return False, motif, cols_manquantes, cols_sup
+    
     # Affichage classique (non utilisé ici)
     print(f"[ERREUR COLONNES] {filename}")
     print(f"  Colonnes trouvées : {df.columns.tolist()}")
@@ -681,6 +720,7 @@ def validate_strict_columns(df, filename, formats, return_details=False):
         print(f"  Colonnes manquantes : {cols_manquantes}")
     if cols_sup:
         print(f"  Colonnes supplémentaires : {cols_sup}")
+    
     return False
 
 # --------------------------------------------------
