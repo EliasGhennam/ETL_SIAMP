@@ -1307,30 +1307,43 @@ class MainWindow(QMainWindow):
     def _build_parametres_ui(self, parent_widget):
         layout = QVBoxLayout(parent_widget)
 
-        layout.addWidget(QLabel("Sélection des fichiers de référence :"))
+        layout.addWidget(QLabel("Fichier de référence unique :"))
 
-        # Fichier ZONE AFFECTATION
-        row_zone = QHBoxLayout()
-        row_zone.addWidget(QLabel("ZONE AFFECTATION :"))
-        self.txt_zone_affectation = QLineEdit()
-        btn_zone = QPushButton("Parcourir…")
-        btn_zone.clicked.connect(self._choose_zone_affectation)
-        row_zone.addWidget(self.txt_zone_affectation)
-        row_zone.addWidget(btn_zone)
-        layout.addLayout(row_zone)
+        # Zone de glisser-déposer pour le fichier de référence
+        layout.addWidget(QLabel("Glissez votre fichier de référence ici ou cliquez pour le sélectionner :"))
+        self.lst_reference_file = DropListWidget(on_click_callback=self._add_reference_file)
+        self.lst_reference_file.setMaximumHeight(100)
+        layout.addWidget(self.lst_reference_file)
 
-        # Fichier table
-        row_table = QHBoxLayout()
-        row_table.addWidget(QLabel("table :"))
-        self.txt_table_file = QLineEdit()
-        btn_table = QPushButton("Parcourir…")
-        btn_table.clicked.connect(self._choose_table_file)
-        row_table.addWidget(self.txt_table_file)
-        row_table.addWidget(btn_table)
-        layout.addLayout(row_table)
+        # Boutons pour le fichier de référence
+        btn_ref_bar = QHBoxLayout()
+        btn_add_ref = QPushButton("Ajouter fichier de référence…")
+        btn_add_ref.clicked.connect(self._add_reference_file)
+        btn_rem_ref = QPushButton("Retirer")
+        btn_rem_ref.clicked.connect(self._remove_reference_file)
+        btn_ref_bar.addWidget(btn_add_ref)
+        btn_ref_bar.addWidget(btn_rem_ref)
+        btn_ref_bar.addStretch()
+        layout.addLayout(btn_ref_bar)
+
+        # Informations sur la structure attendue
+        layout.addWidget(QLabel("<b>Structure attendue du fichier de référence :</b>"))
+        info_text = QPlainTextEdit()
+        info_text.setMaximumHeight(150)
+        info_text.setReadOnly(True)
+        info_text.setPlainText("""Feuille "table" :
+• Colonne B : PRODUCT NAME
+• Colonne C : Surfamille ret  
+• Colonne G : CONCAT NAME (ENSEIGNE + CUSTOMER NAME)
+• Colonne H : Enseigne ret
+
+Feuille "ZONE AFFECTATION" :
+• Colonne A : PAYS
+• Colonne E : COMMERCIAL AREA""")
+        layout.addWidget(info_text)
 
         # Bouton Sauvegarder
-        btn_save = QPushButton("💾 Sauvegarder les chemins")
+        btn_save = QPushButton("💾 Sauvegarder le chemin")
         btn_save.clicked.connect(self._save_reference_paths)
         layout.addWidget(btn_save)
 
@@ -1361,11 +1374,40 @@ class MainWindow(QMainWindow):
         self.txt_diag.setMaximumBlockCount(1000)
         layout.addWidget(self.txt_diag, stretch=2)
 
+    def _add_reference_file(self):
+        file, _ = QFileDialog.getOpenFileName(self, "Sélectionner fichier de référence", "", "Excel (*.xlsx)")
+        if file:
+            # Vérifier que le fichier contient les feuilles requises
+            try:
+                xls = pd.ExcelFile(file, engine="openpyxl")
+                if "table" in xls.sheet_names and "ZONE AFFECTATION" in xls.sheet_names:
+                    # Vider la liste et ajouter le nouveau fichier
+                    self.lst_reference_file.clear()
+                    self.lst_reference_file.addItem(file)
+                    QMessageBox.information(self, "✅ Succès", f"Fichier de référence validé :\n- Feuille 'table' détectée\n- Feuille 'ZONE AFFECTATION' détectée")
+                else:
+                    missing_sheets = []
+                    if "table" not in xls.sheet_names:
+                        missing_sheets.append("table")
+                    if "ZONE AFFECTATION" not in xls.sheet_names:
+                        missing_sheets.append("ZONE AFFECTATION")
+                    QMessageBox.warning(self, "Erreur", f"Feuilles manquantes : {', '.join(missing_sheets)}")
+            except Exception as e:
+                QMessageBox.critical(self, "Erreur", f"Impossible d'ouvrir le fichier :\n{e}")
+
+    def _remove_reference_file(self):
+        self.lst_reference_file.clear()
+
     def _save_reference_paths(self):
         config = configparser.ConfigParser()
+        
+        # Récupérer le chemin du fichier de référence
+        reference_file = ""
+        if self.lst_reference_file.count() > 0:
+            reference_file = self.lst_reference_file.item(0).text()
+        
         config['REFERENCES'] = {
-            'zone_affectation': self.txt_zone_affectation.text(),
-            'table': self.txt_table_file.text()
+            'reference_file': reference_file
         }
         
         # Créer le répertoire mydata s'il n'existe pas
@@ -1374,7 +1416,7 @@ class MainWindow(QMainWindow):
         
         with open(CONFIG_REF_FILE, 'w') as cfgfile:
             config.write(cfgfile)
-        QMessageBox.information(self, "Succès", "Les chemins des fichiers de référence ont été sauvegardés.")
+        QMessageBox.information(self, "Succès", "Le chemin du fichier de référence a été sauvegardé.")
         self._load_reference_paths()  # Recharge directement après sauvegarde
 
     def _load_reference_paths(self):
@@ -1382,47 +1424,16 @@ class MainWindow(QMainWindow):
             config = configparser.ConfigParser()
             config.read(CONFIG_REF_FILE)
             refs = config['REFERENCES']
-            self.txt_zone_affectation.setText(refs.get('zone_affectation', ''))
-            self.txt_table_file.setText(refs.get('table', ''))
+            reference_file = refs.get('reference_file', '')
 
-            # ✅ Check si les fichiers existent physiquement
-            zone_ok = os.path.exists(self.txt_zone_affectation.text())
-            table_ok = os.path.exists(self.txt_table_file.text())
+            # Vider la liste et ajouter le fichier de référence
+            self.lst_reference_file.clear()
+            if reference_file and os.path.exists(reference_file):
+                self.lst_reference_file.addItem(reference_file)
 
-            if not zone_ok or not table_ok:
-                msg = "⚠️ Fichiers de référence manquants ou invalides :\n"
-                if not zone_ok:
-                    msg += f" - ZONE AFFECTATION : {self.txt_zone_affectation.text()}\n"
-                if not table_ok:
-                    msg += f" - table : {self.txt_table_file.text()}\n"
-                QMessageBox.warning(self, "Attention", msg)
-                
-    def _choose_zone_affectation(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Choisir ZONE AFFECTATION", "", "Excel (*.xlsx)")
-        if path:
-            try:
-                xls = pd.ExcelFile(path, engine="openpyxl")
-                if "ZONE AFFECTATION" in xls.sheet_names:
-                    self.txt_zone_affectation.setText(path)
-                    QMessageBox.information(self, "✅ Succès", f"Fichier validé : Feuille 'ZONE AFFECTATION' détectée.")
-                else:
-                    QMessageBox.warning(self, "Erreur", f"Aucune feuille 'ZONE AFFECTATION' trouvée dans ce fichier.")
-            except Exception as e:
-                QMessageBox.critical(self, "Erreur", f"Impossible d'ouvrir le fichier :\n{e}")
-
-
-    def _choose_table_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Choisir table", "", "Excel (*.xlsx)")
-        if path:
-            try:
-                xls = pd.ExcelFile(path, engine="openpyxl")
-                if "table" in xls.sheet_names:
-                    self.txt_table_file.setText(path)
-                    QMessageBox.information(self, "✅ Succès", f"Fichier validé : Feuille 'table' détectée.")
-                else:
-                    QMessageBox.warning(self, "Erreur", f"Aucune feuille 'table' trouvée dans ce fichier.")
-            except Exception as e:
-                QMessageBox.critical(self, "Erreur", f"Impossible d'ouvrir le fichier :\n{e}")
+            # ✅ Check si le fichier existe physiquement
+            if reference_file and not os.path.exists(reference_file):
+                QMessageBox.warning(self, "Attention", f"⚠️ Fichier de référence manquant ou invalide :\n{reference_file}")
 
     def _check_columns_in_files(self):
         files = self.lst_files.files()
