@@ -667,14 +667,14 @@ def main():
         axis=1
     )
 
-    # Conversion de COGS et VARIABLE COSTS en euros (comme CA en €)
-    fusion["COGS en €"] = fusion.apply(
+    # Conversion de COGS et VARIABLE COSTS en euros (remplacement direct)
+    fusion["COGS"] = fusion.apply(
         lambda row: row["COGS"] / row["Taux €"]
         if pd.notnull(row.get("COGS")) and pd.notnull(row.get("Taux €")) and row["Taux €"] != 0
         else None,
         axis=1
     )
-    fusion["VARIABLE COSTS en €"] = fusion.apply(
+    fusion["VARIABLE COSTS"] = fusion.apply(
         lambda row: row["VARIABLE COSTS"] / row["Taux €"]
         if pd.notnull(row.get("VARIABLE COSTS")) and pd.notnull(row.get("Taux €")) and row["Taux €"] != 0
         else None,
@@ -683,15 +683,15 @@ def main():
 
     # ➕ Calcul des marges avec les coûts déjà convertis en euros
     fusion["VAR Margin"] = fusion.apply(
-        lambda row: row["C.A en €"] - (row["VARIABLE COSTS en €"] * row["QUANTITY"])
-        if pd.notnull(row.get("C.A en €")) and pd.notnull(row.get("VARIABLE COSTS en €")) and pd.notnull(row.get("QUANTITY"))
+        lambda row: row["C.A en €"] - (row["VARIABLE COSTS"] * row["QUANTITY"])
+        if pd.notnull(row.get("C.A en €")) and pd.notnull(row.get("VARIABLE COSTS")) and pd.notnull(row.get("QUANTITY"))
         else None,
         axis=1
     )
 
     fusion["Margin"] = fusion.apply(
-        lambda row: row["C.A en €"] - (row["COGS en €"] * row["QUANTITY"])
-        if pd.notnull(row.get("C.A en €")) and pd.notnull(row.get("COGS en €")) and pd.notnull(row.get("QUANTITY"))
+        lambda row: row["C.A en €"] - (row["COGS"] * row["QUANTITY"])
+        if pd.notnull(row.get("C.A en €")) and pd.notnull(row.get("COGS")) and pd.notnull(row.get("QUANTITY"))
         else None,
         axis=1
     )
