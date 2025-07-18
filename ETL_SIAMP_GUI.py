@@ -447,7 +447,7 @@ class MainWindow(QMainWindow):
             "MONTH", "SIAMP UNIT", "SALE TYPE", "TYPE OF CANAL", "ENSEIGNE", "CUSTOMER NAME", "COMMERCIAL AREA",
             "SUR FAMILLE", "FAMILLE", "REFERENCE", "PRODUCT NAME", "QUANTITY", "TURNOVER", "CURRENCY",
             "COUNTRY", "C.A en €", "VARIABLE COSTS", "COGS", "VAR Margin", "Margin",
-            "NOMFICHIER", "FEUILLE", "Enseigne ret", "Surfamille ret", "SOURCE", "Taux €"
+            "NOMFICHIER", "FEUILLE", "Enseigne ret", "Surfamille ret", "SOURCE", "Taux €", "BUDGET TURNOVER"
         ]
         scroll_area_histo, self.histo_column_status_bar = ColumnStatusBar.create_scrollable(expected_histo_columns)
         layout.addWidget(scroll_area_histo)
@@ -571,27 +571,7 @@ class MainWindow(QMainWindow):
             self.pbar_historique.setValue(0)
             all_dfs = []
 
-            total = len(files)
-            for idx, path in enumerate(files, 1):
-                self.txt_log_historique.appendPlainText(f"[{idx}/{total}] Lecture : {os.path.basename(path)}")
-                df = pd.read_excel(path, engine="openpyxl")
-                
-                # Extraire l'année du nom de fichier
-                year = self._extract_year_from_filename(os.path.basename(path))
-                
-                # Formater les dates
-                df = self._format_date_column(df, year)
-                
-                all_dfs.append(df)
-                self.pbar_historique.setValue(int((idx / total) * 100))
-            
-            if not all_dfs:
-                self.txt_log_historique.appendPlainText("❌ Aucun fichier valide à fusionner.")
-                return
-
-            fusion = pd.concat(all_dfs, ignore_index=True)
-
-            # Réordonner les colonnes comme dans l'ETL
+            # Colonnes attendues
             ORDER = [
                 "MONTH", "SIAMP UNIT", "SALE TYPE", "TYPE OF CANAL", "ENSEIGNE", "CUSTOMER NAME",
                 "COMMERCIAL AREA", "SUR FAMILLE", "FAMILLE", "REFERENCE", "PRODUCT NAME",
@@ -599,105 +579,50 @@ class MainWindow(QMainWindow):
                 "VARIABLE COSTS", "COGS", "VAR Margin", "Margin",
                 "Enseigne ret", "Surfamille ret", "NOMFICHIER", "FEUILLE", "SOURCE", "Taux €"
             ]
-            fusion = fusion[[c for c in ORDER if c in fusion.columns] +
-                            [c for c in fusion.columns if c not in ORDER]]
-            
-            # ➤ Réorganisation des colonnes dans l'ordre métier
-            fusion = fusion[[c for c in ORDER if c in fusion.columns]
-                            + [c for c in fusion.columns if c not in ORDER]]
 
-            # ➤ Sauvegarde Excel
+            # Détection de la colonne BUDGET TURNOVER
+            budget_turnover_present = False
+            for path in files:
+                try:
+                    df_test = pd.read_excel(path, engine="openpyxl", nrows=0)
+                    if "BUDGET TURNOVER" in df_test.columns:
+                        budget_turnover_present = True
+                        break
+                except Exception:
+                    pass
+            if budget_turnover_present:
+                ORDER.append("BUDGET TURNOVER")
+
+            total = len(files)
+            for idx, path in enumerate(files, 1):
+                self.txt_log_historique.appendPlainText(f"[{idx}/{total}] Lecture : {os.path.basename(path)}")
+                try:
+                    df = pd.read_excel(path, engine="openpyxl")
+                    missing = [col for col in ORDER if col not in df.columns]
+                    if missing:
+                        self.txt_log_historique.appendPlainText(f"   → Colonnes manquantes dans {os.path.basename(path)} : {missing}")
+                    # Ajouter les colonnes manquantes vides
+                    for col in missing:
+                        df[col] = None
+                    # Garder uniquement les colonnes de ORDER (dans l'ordre)
+                    df = df[[col for col in ORDER]]
+                    all_dfs.append(df)
+                except Exception as e:
+                    self.txt_log_historique.appendPlainText(f"[WARN] ⚠ Fichier ignoré : {path} – {e}")
+                self.pbar_historique.setValue(int((idx / total) * 100))
+
+            if not all_dfs:
+                self.txt_log_historique.appendPlainText("❌ Aucun fichier valide à fusionner.")
+                return
+
+            fusion = pd.concat(all_dfs, ignore_index=True)
             fusion.to_excel(out, index=False)
-
-
-            # Sauvegarder en Excel
-            fusion.to_excel(out, index=False)
-
-            # Appliquer le formatage Excel
-            wb = load_workbook(out)
-            ws = wb.active
-
-            # Définir la plage du tableau et créer une table formatée
-            last_col_letter = get_column_letter(ws.max_column)
-            last_row = ws.max_row
-            table_range = f"A1:{last_col_letter}{last_row}"
-
-            # Créer et appliquer la table avec style
-            table = Table(displayName="HistoriqueTable", ref=table_range)
-            table.tableStyleInfo = TableStyleInfo(
-                name="TableStyleMedium2",
-                showFirstColumn=False,
-                showLastColumn=False,
-                showRowStripes=True,
-                showColumnStripes=False
-            )
-            
-            # Supprimer toute table existante et ajouter la nouvelle
-            ws._tables.clear()
-            ws.add_table(table)
-
-            # Formater les colonnes spécifiques
-            for idx, column in enumerate(ws[1], 1):
-                col_letter = get_column_letter(idx)
-                
-                # Formater la colonne MONTH comme date
-                if column.value == "MONTH":
-                    for cell in ws[col_letter][1:]:  # Skip header
-                        if cell.value:
-                            try:
-                                if isinstance(cell.value, (datetime, pd.Timestamp)):
-                                    # Déjà en datetime, appliquer juste le format
-                                    cell.number_format = "dd/mm/yyyy"
-                                else:
-                                    # Convertir en datetime Excel
-                                    date_val = pd.to_datetime(cell.value, errors="coerce")
-                                    if pd.notna(date_val):
-                                        cell.value = date_val
-                                        cell.number_format = "dd/mm/yyyy"
-                            except Exception:
-                                pass
-
-                # Formater uniquement la colonne "TURNOVER €" avec le symbole €
-                elif column.value == "TURNOVER €":
-                    for cell in ws[col_letter][1:]:
-                        if cell.value and isinstance(cell.value, (int, float)):
-                            cell.number_format = "#,##0.00 €"
-
-                # Formater les autres colonnes monétaires sans le symbole €
-                elif column.value in ["TURNOVER", "C.A en €", "VARIABLE COSTS", "COGS", "VAR Margin", "Margin"]:
-                    for cell in ws[col_letter][1:]:
-                        if cell.value and isinstance(cell.value, (int, float)):
-                            cell.number_format = "#,##0.00"
-
-                # Formater la colonne QUANTITY
-                elif column.value == "QUANTITY":
-                    for cell in ws[col_letter][1:]:
-                        if cell.value and isinstance(cell.value, (int, float)):
-                            cell.number_format = "#,##0"
-
-            # Figer la première ligne
-            ws.freeze_panes = "A2"
-
-            # Ajuster la largeur des colonnes
-            for column in ws.columns:
-                max_length = 0
-                column_letter = get_column_letter(column[0].column)
-                for cell in column:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = (max_length + 2)
-                ws.column_dimensions[column_letter].width = min(adjusted_width, 50)
-
-            wb.save(out)
-            self.txt_log_historique.appendPlainText(f"✅ Fusion terminée avec mise en forme optimisée. Fichier créé : {out}")
+            self.txt_log_historique.appendPlainText(f"✅ Fusion terminée. Fichier créé : {out}")
             self.pbar_historique.setValue(100)
         except Exception as e:
             self.txt_log_historique.appendPlainText(f"[ERROR] ❌ Une erreur est survenue pendant la fusion : {e}")
             import traceback
-            traceback.print_exc()
+            self.txt_log_historique.appendPlainText(traceback.format_exc())
 
     def _check_histo_columns_in_files(self):
         files = self.lst_historique_files.files()

@@ -14,11 +14,13 @@ ETL_SIAMP est un outil ETL (Extract, Transform, Load) conçu pour automatiser le
 ## Installation
 
 1. Cloner le repository :
+
 ```bash
 git clone https://github.com/EliasGhennam/ETL_SIAMP.git
 ```
 
 2. Installer les dépendances :
+
 ```bash
 pip install -r requirements.txt
 ```
@@ -26,6 +28,7 @@ pip install -r requirements.txt
 ## Utilisation
 
 1. Lancer l'interface graphique :
+
 ```bash
 python ETL_SIAMP_GUI.py
 ```
@@ -46,6 +49,7 @@ python ETL_SIAMP_GUI.py
 ## Contribution
 
 Les contributions sont les bienvenues ! N'hésitez pas à :
+
 1. Fork le projet
 2. Créer une branche pour votre fonctionnalité
 3. Commiter vos changements
@@ -55,3 +59,40 @@ Les contributions sont les bienvenues ! N'hésitez pas à :
 ## Licence
 
 Ce projet est sous licence MIT.
+
+## Tests
+
+L'application ETL_SIAMP dispose d'une suite complète de tests fonctionnels et unitaires pour garantir sa fiabilité.
+
+### Exécution des tests
+
+Pour exécuter tous les tests :
+
+```bash
+python -m pytest tests/
+```
+
+Pour exécuter un test spécifique :
+
+```bash
+python -m pytest tests/test_functional.py
+```
+
+### Structure des tests
+
+- `test_functional.py` : Tests fonctionnels complets couvrant le processus ETL
+- `test_column_mapping.py` : Tests du mapping des colonnes et normalisation
+- `test_rates.py` : Tests de la récupération et conversion des taux de change
+- `test_reference_mapping.py` : Tests du mapping des références produit
+- `test_gui.py` : Tests des composants de l'interface graphique
+
+### Couverture des tests
+
+Les tests couvrent les fonctionnalités principales suivantes :
+
+- Normalisation des noms de colonnes et détection de formats variés
+- Récupération des taux de change depuis l'API ECB
+- Conversion des devises
+- Mapping des références produit vers leurs familles
+- Enrichissement des données à partir du fichier de référence
+- Validation des fonctionnalités de l'interface graphique

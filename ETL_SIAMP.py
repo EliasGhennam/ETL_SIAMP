@@ -344,25 +344,19 @@ def main():
 
     if reference_file_path and os.path.exists(reference_file_path):
         try:
-            table_df = pd.read_excel(reference_file_path, sheet_name="table", engine="openpyxl")
-            print(f"[AUDIT] Shape de table_df après lecture : {table_df.shape}", flush=True)
-            # Dédupliquer PRODUCT NAME (colonne B, index 1)
-            if table_df.shape[1] > 1:
-                initial_table_rows = table_df.shape[0]
-                table_df.drop_duplicates(subset=[table_df.columns[1]], keep='first', inplace=True)
-                print(f"[AUDIT] Shape de table_df après déduplication PRODUCT NAME : {table_df.shape}", flush=True)
-            
-            # Dédupliquer CONCAT NAME (colonne G, index 6)
-            if table_df.shape[1] > 6:
-                initial_table_rows = table_df.shape[0] # Re-capture after first deduplication
-                table_df.drop_duplicates(subset=[table_df.columns[6]], keep='first', inplace=True)
-                print(f"[AUDIT] Shape de table_df après déduplication CONCAT NAME : {table_df.shape}", flush=True)
-
-            print(f"[AUDIT] Nombre de doublons dans table_df (PRODUCT NAME) après déduplication : {table_df[table_df.columns[1]].duplicated().sum()}", flush=True)
-            print(f"[AUDIT] Nombre de doublons dans table_df (CONCAT NAME - col G) après déduplication : {table_df.iloc[:, 6].duplicated().sum()}", flush=True)
+            table_df = pd.read_excel(reference_file_path, sheet_name="table", engine="openpyxl", dtype=str)
+            print(f"[AUDIT] Shape de table_df après lecture : {table_df.shape}")
+            print(f"[AUDIT] Colonnes présentes dans table_df : {list(table_df.columns)}")
+            for col in ["REFERENCE V2", "REFERENCE", "ENSEIGNE V2", "ENSEIGNE", "CONCAT NAME"]:
+                if col in table_df.columns:
+                    non_null = table_df[col].notna().sum()
+                    distinct = table_df[col].nunique(dropna=True)
+                    print(f"[AUDIT] {col} : {non_null} valeurs non-nulles, {distinct} distinctes.")
+                    print(f"[AUDIT] Exemples {col} : {table_df[col].dropna().unique()[:10]}")
+            print(f"[AUDIT] ⚠️ Aucun drop_duplicates global n'est appliqué sur table_df. Toutes les lignes sont conservées.")
         except Exception as e:
-            print(f"[AUDIT] Erreur chargement table : {e}", flush=True)
-            print(f"[AUDIT] Erreur chargement table : {e}", flush=True)
+            print(f"[AUDIT] Erreur chargement table : {e}")
+            print(f"[AUDIT] Erreur chargement table : {e}")
 
 
     fusion = pd.concat(all_dfs, ignore_index=True)
@@ -431,194 +425,120 @@ def main():
 
     # ---------------------------- SURFAMILLE RET ----------------------------
     try:
-        print("[INFO] 🔍 Recherche des colonnes pour la fusion Surfamille ret...")
-        
-        # Utiliser les nouvelles colonnes B (PRODUCT NAME) et C (Surfamille ret)
-        if table_df is None or table_df.shape[1] < 2: # Check if table_df is None or has less than 2 columns (index 1 is B)
-            print("[WARN] ⚠️ table_df non chargé ou pas assez de colonnes pour PRODUCT NAME (index 1)", flush=True)
-            product_name_col = "PRODUCT_NAME_TEMP"
-            table_df = pd.DataFrame(columns=[product_name_col, "SURFAMILLE_TEMP"]) # Create dummy df if not loaded
-            table_df[product_name_col] = ""
-            surfamille_col = "SURFAMILLE_TEMP"
-            table_df[surfamille_col] = ""
+        print(f"[AUDIT] Shape de table_df juste avant mapping Surfamille ret : {table_df.shape if table_df is not None else 'table_df=None'}")
+        print("[INFO] 🔍 Nouveau mapping Surfamille ret (V2 puis fallback)...")
+        # Fonction de normalisation forte
+        def normalize_ref(ref):
+            if pd.isna(ref):
+                return ""
+            return re.sub(r'[^A-Z0-9]', '', str(ref).upper())
+        # Appliquer la normalisation sur les références d'origine
+        fusion["REFERENCE_NORM"] = fusion["REFERENCE"].apply(normalize_ref)
+        print(f"[DEBUG] Exemples REFERENCE_NORM fusion : {fusion['REFERENCE_NORM'].unique()[:10]}")
+        if table_df is not None:
+            # --- LOG: Stats sur les colonnes de mapping V2 ---
+            if "REFERENCE V2" in table_df.columns and "Surfamille ret V2" in table_df.columns:
+                table_df["REFERENCE_V2_NORM"] = table_df["REFERENCE V2"].apply(normalize_ref)
+                table_df["Surfamille ret V2"] = table_df["Surfamille ret V2"].astype(str).str.strip().str.upper()
+                print(f"[DEBUG] Exemples REFERENCE_V2_NORM table : {table_df['REFERENCE_V2_NORM'].unique()[:10]}")
+                mapping_v2 = dict(zip(table_df["REFERENCE_V2_NORM"], table_df["Surfamille ret V2"]))
+                fusion["Surfamille ret"] = fusion["REFERENCE_NORM"].map(mapping_v2)
+                found_v2 = fusion["Surfamille ret"].notna().sum()
+                print(f"[LOG] Après mapping V2 (normalisé) : {found_v2} correspondances trouvées sur {len(fusion)} lignes.")
+                if found_v2 > 0:
+                    print(f"[LOG] Exemples de valeurs enrichies (V2) : {fusion.loc[fusion['Surfamille ret'].notna(), ['REFERENCE','Surfamille ret']].head(5).to_dict(orient='records')}")
+                not_found_v2 = fusion.loc[fusion["Surfamille ret"].isna(), "REFERENCE"].unique()[:10]
+                print(f"[LOG] Exemples de REFERENCE non trouvées en V2 : {not_found_v2}")
+            else:
+                fusion["Surfamille ret"] = None
+            # --- Fallback ancien mapping ---
+            mask_vide = fusion["Surfamille ret"].isna()
+            if mask_vide.any() and "REFERENCE" in table_df.columns and "Surfamille ret" in table_df.columns:
+                table_df["REFERENCE_NORM"] = table_df["REFERENCE"].apply(normalize_ref)
+                table_df["Surfamille ret"] = table_df["Surfamille ret"].astype(str).str.strip().str.upper()
+                print(f"[DEBUG] Exemples REFERENCE_NORM table (fallback) : {table_df['REFERENCE_NORM'].unique()[:10]}")
+                mapping_old = dict(zip(table_df["REFERENCE_NORM"], table_df["Surfamille ret"]))
+                fusion.loc[mask_vide, "Surfamille ret"] = fusion.loc[mask_vide, "REFERENCE_NORM"].map(mapping_old)
+                found_fallback = fusion["Surfamille ret"].notna().sum() - found_v2
+                print(f"[LOG] Après fallback (normalisé) : {found_fallback} correspondances trouvées en plus.")
+                if found_fallback > 0:
+                    print(f"[LOG] Exemples de valeurs enrichies (fallback) : {fusion.loc[mask_vide & fusion['Surfamille ret'].notna(), ['REFERENCE','Surfamille ret']].head(5).to_dict(orient='records')}")
+                not_found_final = fusion.loc[fusion["Surfamille ret"].isna(), "REFERENCE"].unique()[:10]
+                print(f"[LOG] Exemples de REFERENCE toujours non trouvées : {not_found_final}")
+            # Si toujours rien, laisser vide
+            mask_vide = fusion["Surfamille ret"].isna()
+            if mask_vide.any():
+                print(f"[LOG] {mask_vide.sum()} lignes sans aucune correspondance pour Surfamille ret.")
+                fusion.loc[mask_vide, "Surfamille ret"] = None
         else:
-            product_name_col = table_df.columns[1]
-            print(f"[INFO] ✅ Utilisation de la colonne PRODUCT NAME à l'index 1: '{product_name_col}'")
-            if table_df.shape[1] < 3: # Check if table_df has less than 3 columns (index 2 is C)
-                print("[WARN] ⚠️ Pas assez de colonnes dans table_df pour Surfamille ret (index 2)", flush=True)
-                surfamille_col = "SURFAMILLE_TEMP"
-                table_df[surfamille_col] = ""
-            else:
-                surfamille_col = table_df.columns[2]
-                print(f"[INFO] ✅ Utilisation de la colonne Surfamille ret à l'index 2: '{surfamille_col}'")
-        
-        # Nettoyage des colonnes trouvées
-        table_df[product_name_col] = table_df[product_name_col].astype(str).str.strip().str.upper()
-        table_df[surfamille_col] = table_df[surfamille_col].astype(str).str.strip().str.upper()
-
-        # Nettoyage de PRODUCT NAME côté fusion
-        fusion["PRODUCT NAME"] = fusion["PRODUCT NAME"].astype(str).str.strip().str.upper()
-
-        print("[DEBUG] Exemples fusion['PRODUCT NAME']:", fusion["PRODUCT NAME"].unique()[:5])
-        print(f"[DEBUG] Exemples table_df['{product_name_col}']:", table_df[product_name_col].unique()[:5])
-
-        # Créer un dictionnaire de correspondance: PRODUCT NAME -> Surfamille ret
-        mapping = {}
-        for i in range(len(table_df)):
-            key = table_df[product_name_col].iloc[i]
-            val = table_df[surfamille_col].iloc[i]
-            if pd.notna(key) and pd.notna(val) and str(key).strip() and str(val).strip():
-                mapping[str(key).strip().upper()] = str(val).strip().upper()
-
-        print(f"[DEBUG] Nombre de correspondances dans le mapping Surfamille ret: {len(mapping)}")
-        if mapping:
-            print(f"[DEBUG] Exemples de correspondances Surfamille ret:")
-            for k, v in list(mapping.items())[:3]:
-                print(f"  '{k}' -> '{v}'")
-
-        initial_fusion_rows = fusion.shape[0]
-        # Appliquer le mapping au lieu d'un merge
-        fusion["Surfamille ret"] = fusion["PRODUCT NAME"].map(mapping)
-        print(f"[AUDIT] Shape après mapping Surfamille ret : {fusion.shape}", flush=True)
-        if fusion.shape[0] != initial_fusion_rows:
-            print(f"[AUDIT] ATTENTION: Mapping Surfamille ret a modifié le nombre de lignes (de {initial_fusion_rows} à {fusion.shape[0]})", flush=True)
-
-        # Vérifier le résultat
-        filled = fusion["Surfamille ret"].notna().sum()
-        print(f"[INFO] ✅ Colonne Surfamille ret remplie avec {filled} valeurs sur {len(fusion)} lignes")
-        if filled == 0:
-            print("[WARN] Toutes les valeurs de 'Surfamille ret' sont vides après mapping !")
-            print("[DEBUG] Valeurs uniques fusion['PRODUCT NAME']:", fusion["PRODUCT NAME"].unique()[:10])
-            print(f"[DEBUG] Valeurs uniques table_df['{product_name_col}']:", table_df[product_name_col].unique()[:10])
-
-        # Si aucune correspondance n'a été trouvée, utiliser une valeur par défaut
-        if filled == 0:
-            print("[WARN] ⚠️ Aucune correspondance trouvée. Utilisation d'une valeur par défaut.")
-            # Extraire les valeurs uniques de la colonne C (index 2)
-            if table_df.shape[1] > 2 and not table_df.empty:
-                c_values = table_df.iloc[:, 2].dropna().unique()
-                if len(c_values) > 0:
-                    default_value = str(c_values[0]).strip().upper()
-                    fusion["Surfamille ret"] = default_value
-                    print(f"[INFO] ✅ Valeur par défaut utilisée: '{default_value}'")
-                else:
-                    fusion["Surfamille ret"] = "SURFAMILLE RET"
-                    print("[INFO] ✅ Valeur par défaut utilisée: 'SURFAMILLE RET'")
-            else:
-                fusion["Surfamille ret"] = "SURFAMILLE RET"
-                print("[INFO] ✅ Valeur par défaut utilisée: 'SURFAMILLE RET' (fallback)")
-
-        # Nettoyage de tous les caractères invisibles restants
-        def nettoyer_cellules(df):
-            return df.applymap(
-                lambda x: (
-                    re.sub(r'[^\x09\x0A\x0D\x20-\x7E\u00A0-\uFFFF]', '', str(x))
-                    if isinstance(x, str) else x
-                )
-            )
-        fusion = nettoyer_cellules(fusion)
-
+            fusion["Surfamille ret"] = None
+        print(f"[INFO] ✅ Mapping Surfamille ret terminé. {fusion['Surfamille ret'].notna().sum()} valeurs trouvées sur {len(fusion)} lignes.")
     except Exception as e:
-        print(f"[ERROR] ❌ Erreur fusion SURFAMILLE RET : {e}")
+        print(f"[ERROR] ❌ Erreur mapping Surfamille ret : {e}")
         traceback.print_exc()
-        print(f"[AUDIT] Erreur fusion SURFAMILLE RET : {e}", flush=True)
-        # Assurer que le processus continue même en cas d'erreur
         if "Surfamille ret" not in fusion.columns:
-            print("[WARN] ⚠️ Création d'une colonne 'Surfamille ret' vide suite à l'erreur")
-            fusion["Surfamille ret"] = ""
-
+            fusion["Surfamille ret"] = None
 
     # ---------------------------- ENSEIGNE RET ----------------------------
     try:
-        print("[INFO] 🔍 Création de la colonne Enseigne ret avec la méthode de concaténation...")
-        
-        # Nettoyage et normalisation des colonnes dans fusion
+        print(f"[AUDIT] Shape de table_df juste avant mapping Enseigne ret : {table_df.shape if table_df is not None else 'table_df=None'}")
+        print("[INFO] 🔍 Nouveau mapping Enseigne ret (V2 puis fallback)...")
         fusion["ENSEIGNE"] = fusion["ENSEIGNE"].fillna("").astype(str).str.strip().str.upper()
         fusion["CUSTOMER NAME"] = fusion["CUSTOMER NAME"].fillna("").astype(str).str.strip().str.upper()
-        
-        # Création de la clé de concaténation dans fusion
-        fusion["concat_key"] = fusion["ENSEIGNE"] + fusion["CUSTOMER NAME"]
-        print(f"[DEBUG] Exemples fusion['concat_key']:", fusion["concat_key"].unique()[:5])
-        
-        # Vérifier si le fichier de référence a suffisamment de colonnes
-        if table_df is None or table_df.shape[1] < 7: # Check if table_df is None or has less than 7 columns (index 6 is G)
-            print("[WARN] ⚠️ table_df non chargé ou pas assez de colonnes pour CONCAT NAME (index 6)", flush=True)
-            # Create dummy df if not loaded to avoid further errors
-            table_df = pd.DataFrame(columns=["CONCAT_NAME_TEMP", "ENSEIGNE_RET_TEMP"])
-            table_df["CONCAT_NAME_TEMP"] = ""
-            table_df["ENSEIGNE_RET_TEMP"] = ""
-            # Use default values for mapping in this case
-            mapping = {}
-            default_value_for_mapping = "ENSEIGNE RET"
-        else:
-            # Créer la clé de concaténation dans table_df (colonne G = index 6)
-            table_df["concat_key"] = table_df.iloc[:, 6].fillna("").astype(str).str.strip().str.upper()
-            print(f"[DEBUG] Exemples table_df['concat_key']:", table_df["concat_key"].unique()[:5])
-            
-            # Créer un dictionnaire de correspondance: concat_key -> Enseigne ret (colonne H = index 7)
-            mapping = {}
-            if table_df.shape[1] > 7:
-                for i in range(len(table_df)):
-                    key = table_df["concat_key"].iloc[i]
-                    val = table_df.iloc[i, 7]
-                    if pd.notna(key) and pd.notna(val) and str(key).strip() and str(val).strip():
-                        mapping[str(key).strip().upper()] = str(val).strip().upper()
+        print(f"[DEBUG] Type ENSEIGNE fusion : {fusion['ENSEIGNE'].apply(type).value_counts()}")
+        print(f"[DEBUG] Exemples ENSEIGNE fusion : {fusion['ENSEIGNE'].unique()[:10]}")
+        if table_df is not None:
+            # --- LOG: Stats sur les colonnes de mapping V2 ---
+            if "ENSEIGNE V2" in table_df.columns and "Enseigne ret V2" in table_df.columns:
+                table_df["ENSEIGNE V2"] = table_df["ENSEIGNE V2"].astype(str).str.strip().str.upper()
+                table_df["Enseigne ret V2"] = table_df["Enseigne ret V2"].astype(str).str.strip().str.upper()
+                print(f"[DEBUG] Type ENSEIGNE V2 table : {table_df['ENSEIGNE V2'].apply(type).value_counts()}")
+                print(f"[DEBUG] Exemples ENSEIGNE V2 table : {table_df['ENSEIGNE V2'].unique()[:10]}")
+                print(f"[LOG] Nb valeurs distinctes ENSEIGNE V2 : {table_df['ENSEIGNE V2'].nunique()}")
+                print(f"[LOG] Exemples ENSEIGNE V2 : {table_df['ENSEIGNE V2'].dropna().unique()[:5]}")
+                print(f"[LOG] Nb valeurs distinctes Enseigne ret V2 : {table_df['Enseigne ret V2'].nunique()}")
+                print(f"[LOG] Exemples Enseigne ret V2 : {table_df['Enseigne ret V2'].dropna().unique()[:5]}")
+                mapping_v2 = dict(zip(table_df["ENSEIGNE V2"], table_df["Enseigne ret V2"]))
+                fusion["Enseigne ret"] = fusion["ENSEIGNE"].map(mapping_v2)
+                found_v2 = fusion["Enseigne ret"].notna().sum()
+                print(f"[LOG] Après mapping V2 : {found_v2} correspondances trouvées sur {len(fusion)} lignes.")
+                if found_v2 > 0:
+                    print(f"[LOG] Exemples de valeurs enrichies (V2) : {fusion.loc[fusion['Enseigne ret'].notna(), ['ENSEIGNE','Enseigne ret']].head(5).to_dict(orient='records')}")
+                not_found_v2 = fusion.loc[fusion["Enseigne ret"].isna(), "ENSEIGNE"].unique()[:10]
+                print(f"[LOG] Exemples de ENSEIGNE non trouvées en V2 : {not_found_v2}")
             else:
-                print("[WARN] ⚠️ Pas assez de colonnes dans table_df pour Enseigne ret (index 7)", flush=True)
-            
-            print(f"[DEBUG] Nombre de correspondances dans le mapping: {len(mapping)}")
-            if mapping:
-                print(f"[DEBUG] Exemples de correspondances:")
-                for k, v in list(mapping.items())[:3]:
-                    print(f"  '{k}' -> '{v}'")
-            
-            # Appliquer le mapping à fusion
-            initial_fusion_rows = fusion.shape[0]
-            fusion["Enseigne ret"] = fusion["concat_key"].map(mapping)
-            print(f"[AUDIT] Shape après mapping Enseigne ret : {fusion.shape}", flush=True)
-            if fusion.shape[0] != initial_fusion_rows:
-                print(f"[AUDIT] ATTENTION: Mapping Enseigne ret a modifié le nombre de lignes (de {initial_fusion_rows} à {fusion.shape[0]})", flush=True)
-            
-            # Vérifier le résultat
-            filled = fusion["Enseigne ret"].notna().sum()
-            print(f"[INFO] ✅ Colonne Enseigne ret remplie avec {filled} valeurs sur {len(fusion)} lignes")
-            if filled == 0:
-                print("[WARN] Toutes les valeurs de 'Enseigne ret' sont vides après mapping !")
-                print("[DEBUG] Valeurs uniques fusion['concat_key']:", fusion["concat_key"].unique()[:10])
-                print("[DEBUG] Valeurs uniques table_df['concat_key']:", table_df["concat_key"].unique()[:10])
-            
-            # Nettoyer les colonnes temporaires
-            fusion.drop(columns=["concat_key"], inplace=True)
-            # Only drop table_df's concat_key if it was actually created
-            if "concat_key" in table_df.columns: # Added check
-                table_df.drop(columns=["concat_key"], inplace=True)
-                
-            # Si aucune correspondance n'a été trouvée, utiliser une valeur par défaut
-            if filled == 0:
-                print("[WARN] ⚠️ Aucune correspondance trouvée. Utilisation d'une valeur par défaut.")
-                # Extraire les valeurs uniques de la colonne H (index 7)
-                # Ensure column H (index 7) exists before trying to access it
-                if table_df.shape[1] > 7 and not table_df.empty:  # Added empty check
-                    h_values = table_df.iloc[:, 7].dropna().unique()
-                    if len(h_values) > 0:
-                        default_value = str(h_values[0]).strip().upper()
-                        fusion["Enseigne ret"] = default_value
-                        print(f"[INFO] ✅ Valeur par défaut utilisée: '{default_value}'")
-                    else:
-                        fusion["Enseigne ret"] = "ENSEIGNE RET"
-                        print("[INFO] ✅ Valeur par défaut utilisée: 'ENSEIGNE RET'")
-                else:
-                    fusion["Enseigne ret"] = "ENSEIGNE RET"
-                    print("[INFO] ✅ Valeur par défaut utilisée: 'ENSEIGNE RET' (fallback)")
-    
+                fusion["Enseigne ret"] = None
+            # --- Fallback ancien mapping ---
+            mask_vide = fusion["Enseigne ret"].isna()
+            if mask_vide.any() and "CONCAT NAME" in table_df.columns and "Enseigne ret" in table_df.columns:
+                table_df["CONCAT NAME"] = table_df["CONCAT NAME"].astype(str).str.strip().str.upper()
+                table_df["Enseigne ret"] = table_df["Enseigne ret"].astype(str).str.strip().str.upper()
+                print(f"[DEBUG] Type CONCAT NAME table (fallback) : {table_df['CONCAT NAME'].apply(type).value_counts()}")
+                print(f"[DEBUG] Exemples CONCAT NAME table (fallback) : {table_df['CONCAT NAME'].unique()[:10]}")
+                fusion["concat_key"] = fusion["ENSEIGNE"] + fusion["CUSTOMER NAME"]
+                print(f"[DEBUG] Exemples concat_key fusion : {fusion['concat_key'].unique()[:10]}")
+                mapping_old = dict(zip(table_df["CONCAT NAME"], table_df["Enseigne ret"]))
+                fusion.loc[mask_vide, "Enseigne ret"] = fusion.loc[mask_vide, "concat_key"].map(mapping_old)
+                found_fallback = fusion["Enseigne ret"].notna().sum() - found_v2
+                print(f"[LOG] Après fallback : {found_fallback} correspondances trouvées en plus.")
+                if found_fallback > 0:
+                    print(f"[LOG] Exemples de valeurs enrichies (fallback) : {fusion.loc[mask_vide & fusion['Enseigne ret'].notna(), ['ENSEIGNE','CUSTOMER NAME','Enseigne ret']].head(5).to_dict(orient='records')}")
+                not_found_final = fusion.loc[fusion["Enseigne ret"].isna(), "ENSEIGNE"].unique()[:10]
+                print(f"[LOG] Exemples de ENSEIGNE toujours non trouvées : {not_found_final}")
+                fusion.drop(columns=["concat_key"], inplace=True, errors="ignore")
+            # Si toujours rien, laisser vide
+            mask_vide = fusion["Enseigne ret"].isna()
+            if mask_vide.any():
+                print(f"[LOG] {mask_vide.sum()} lignes sans aucune correspondance pour Enseigne ret.")
+                fusion.loc[mask_vide, "Enseigne ret"] = None
+        else:
+            fusion["Enseigne ret"] = None
+        print(f"[INFO] ✅ Mapping Enseigne ret terminé. {fusion['Enseigne ret'].notna().sum()} valeurs trouvées sur {len(fusion)} lignes.")
     except Exception as e:
-        print(f"[AUDIT] Erreur lors de la création de la colonne Enseigne ret : {e}", flush=True)
+        print(f"[ERROR] ❌ Erreur mapping Enseigne ret : {e}")
         traceback.print_exc()
-        print(f"[AUDIT] Erreur lors de la création de la colonne Enseigne ret : {e}", flush=True)
-        # Assurer que le processus continue même en cas d'erreur
         if "Enseigne ret" not in fusion.columns:
-            print("[WARN] ⚠️ Création d'une colonne 'Enseigne ret' vide suite à l'erreur")
-            fusion["Enseigne ret"] = ""
+            fusion["Enseigne ret"] = None
 
     # 🔍 Extraire les dates uniques de la colonne "MONTH"
     if "MONTH" in fusion.columns:
